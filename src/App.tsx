@@ -43,9 +43,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
-import { auth } from './lib/firebase';
-import { firestoreService } from './services/firestoreService';
+import { apiService } from './services/apiService';
 import { Login } from './components/Login';
 import { parseExcelData, calculateStats, isEmployee } from './utils/dataProcessor';
 import { PersonnelData, PersonnelStats } from './types';
@@ -57,7 +55,7 @@ function cn(...inputs: ClassValue[]) {
 const COLORS = ['#FFB000', '#E0E0E0', '#8E8E93', '#1C1C1E', '#3A3A3C'];
 
 export default function App() {
-  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [user, setUser] = useState<{ email: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [data, setData] = useState<PersonnelData[]>([]);
   const [stats, setStats] = useState<PersonnelStats | null>(null);
@@ -72,28 +70,37 @@ export default function App() {
   const [reportConfig, setReportConfig] = useState<{ type: 'unit' | 'position', value: string }>({ type: 'unit', value: '' });
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        setAuthLoading(false);
+    const checkAuth = async () => {
+      const email = localStorage.getItem('user_email');
+      const token = localStorage.getItem('auth_token');
+      
+      if (email && token) {
+        setUser({ email });
         await refreshData();
       } else {
+        setUser(null);
         setData([]);
         setStats(null);
-        setAuthLoading(false);
       }
-    });
-    return () => unsubscribe();
+      setAuthLoading(false);
+    };
+    checkAuth();
   }, []);
 
   const refreshData = async () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) return;
+
     setIsLoading(true);
     try {
-      const personnel = await firestoreService.getAllPersonnel();
+      const personnel = await apiService.getAllPersonnel();
       setData(personnel);
       setStats(calculateStats(personnel));
     } catch (err) {
       console.error('Error fetching data:', err);
+      if (err instanceof Error && err.message.includes('Unauthorized')) {
+        handleLogout();
+      }
     } finally {
       setIsLoading(false);
     }
@@ -106,8 +113,7 @@ export default function App() {
     setIsLoading(true);
     try {
       const parsed = await parseExcelData(file);
-      // Batch add to firestore
-      await firestoreService.batchAddPersonnel(parsed);
+      await apiService.addPersonnel(parsed);
       await refreshData();
       setSearchTerm('');
       setDashboardFilter(null);
@@ -126,9 +132,9 @@ export default function App() {
     setIsLoading(true);
     try {
       if (editForm.firestoreId) {
-        await firestoreService.updatePerson(editForm.firestoreId, editForm);
+        await apiService.updatePerson(editForm.firestoreId, editForm);
       } else {
-        await firestoreService.addPerson(editForm);
+        await apiService.addPersonnel(editForm);
       }
       await refreshData();
       setSelectedPerson(editForm);
@@ -147,7 +153,7 @@ export default function App() {
 
     setIsLoading(true);
     try {
-      await firestoreService.deletePerson(firestoreId);
+      await apiService.deletePerson(firestoreId);
       await refreshData();
       setSelectedPerson(null);
     } catch (err) {
@@ -159,7 +165,8 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await signOut(auth);
+    apiService.logout();
+    setUser(null);
   };
 
   const startEditing = () => {

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { auth } from '../lib/firebase';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { apiService } from '../services/apiService';
 import { LogIn, Lock, User, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -19,17 +18,11 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
     setLoading(true);
     setError(null);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      await apiService.login(email, password);
       onSuccess();
     } catch (err: any) {
       console.error('Login error:', err);
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        setError('نام کاربری یا رمز عبور اشتباه است.');
-      } else if (err.code === 'auth/invalid-email') {
-        setError('فرمت ایمیل نامعتبر است.');
-      } else {
-        setError('خطایی در ورود به سیستم رخ داد. لطفا دوباره تلاش کنید.');
-      }
+      setError(err.message || 'نام کاربری یا رمز عبور اشتباه است.');
     } finally {
       setLoading(false);
     }
