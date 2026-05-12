@@ -1,20 +1,86 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# سامانه مدیریت هوشمند پرسنل | Intelligent Personnel Management System
 
-# Run and deploy your AI Studio app
+این پروژه یک سامانه تحت وب برای مدیریت و تحلیل داده‌های پرسنلی بر اساس فایل‌های اکسل است.
+This project is a web-based system for managing and analyzing personnel data based on Excel files.
 
-This contains everything you need to run your app locally.
+---
 
-View your app in AI Studio: https://ai.studio/apps/2a54e502-a8d1-4ce1-8a72-c5cf8538c94e
+## 🇮🇷 راهنمای نصب و اجرا (ubuntu server)
 
-## Run Locally
+### ۱. پیش‌نیازها
+ابتدا باید Node.js و npm را روی سرور خود نصب کنید.
 
-**Prerequisites:**  Node.js
+```bash
+# آپدیت سیستم
+sudo apt update && sudo apt upgrade -y
 
+# نصب Node.js (نسخه پیشنهادی ۲۰ یا بالاتر)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### ۲. نصب پروژه
+فایل‌های پروژه را به سرور منتقل کرده و وارد پوشه پروژه شوید:
+
+```bash
+# نصب بسته‌های مورد نیاز
+npm install
+
+# ساخت نسخه نهایی (Production Build)
+npm run build
+```
+
+### ۳. اجرا با استفاده از PM2 (برای پایداری)
+برای اینکه برنامه بعد از بستن ترمینال هم فعال بماند، از PM2 استفاده می‌کنیم:
+
+```bash
+sudo npm install -g pm2
+# اجرا روی پورت ۳۰۰۰ (یا هر پورت دلخواه در فایل .env)
+pm2 start npm --name "personnel-app" -- run start
+```
+
+---
+
+## 🇬🇧 Deployment Guide (Ubuntu Server)
+
+### 1. Prerequisites
+You need to install Node.js and npm on your server.
+
+```bash
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install Node.js (v20+ recommended)
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+### 2. Project Installation
+Transfer project files to the server and navigate to the project directory:
+
+```bash
+# Install dependencies
+npm install
+
+# Build the project
+npm run build
+```
+
+### 3. Run with PM2 (For Stability)
+To keep the application running in the background, use PM2:
+
+```bash
+sudo npm install -g pm2
+# Run the production server
+pm2 start npm --name "personnel-app" -- run start
+```
+
+---
+
+## 🚀 اسکریپت نصب خودکار / Auto-Install Script
+اگر می‌خواهید همه مراحل بالا به صورت خودکار انجام شود، از فایل `deploy.sh` استفاده کنید:
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
