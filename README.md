@@ -5,7 +5,20 @@ This project is a web-based system for managing and analyzing personnel data bas
 
 ---
 
-## 🇮🇷 راهنمای نصب و اجرا (ubuntu server)
+## 🚀 شروع سریع | Quick Start (One-Liner)
+
+اگر می‌خواهید همه مراحل نصب (Node.js, Git, PM2) و راه‌اندازی پروژه به صورت خودکار روی سرور اوبونتو انجام شود، دستور زیر را در ترمینال اجرا کنید:
+To install everything automatically on an Ubuntu server, run the following command:
+
+```bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO_NAME/main/install.sh)"
+```
+> **نکته:** حتماً قبل از اجرا، آدرس مخزن گیت‌هاب خود را در دستور بالا جایگزین کنید.
+> **Note:** Replace the GitHub URL with your actual repository URL before running.
+
+---
+
+## 🇮🇷 راهنمای نصب دستی (ubuntu server)
 
 ### ۱. پیش‌نیازها
 ابتدا باید Node.js و npm را روی سرور خود نصب کنید.
