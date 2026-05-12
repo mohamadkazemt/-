@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Users as UsersList, 
   UserRound, 
@@ -21,7 +21,11 @@ import {
   CalendarDays,
   LayoutDashboard,
   FileBarChart,
-  X 
+  X,
+  LogOut,
+  Trash2,
+  Save,
+  Plus
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -39,6 +43,10 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { auth } from './lib/firebase';
+import { firestoreService } from './services/firestoreService';
+import { Login } from './components/Login';
 import { parseExcelData, calculateStats, isEmployee } from './utils/dataProcessor';
 import { PersonnelData, PersonnelStats } from './types';
 
@@ -49,6 +57,8 @@ function cn(...inputs: ClassValue[]) {
 const COLORS = ['#FFB000', '#E0E0E0', '#8E8E93', '#1C1C1E', '#3A3A3C'];
 
 export default function App() {
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [data, setData] = useState<PersonnelData[]>([]);
   const [stats, setStats] = useState<PersonnelStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -61,6 +71,34 @@ export default function App() {
   const [dashboardFilter, setDashboardFilter] = useState<{ key: string, value: string } | null>(null);
   const [reportConfig, setReportConfig] = useState<{ type: 'unit' | 'position', value: string }>({ type: 'unit', value: '' });
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setAuthLoading(false);
+        await refreshData();
+      } else {
+        setData([]);
+        setStats(null);
+        setAuthLoading(false);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      const personnel = await firestoreService.getAllPersonnel();
+      setData(personnel);
+      setStats(calculateStats(personnel));
+    } catch (err) {
+      console.error('Error fetching data:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -68,39 +106,92 @@ export default function App() {
     setIsLoading(true);
     try {
       const parsed = await parseExcelData(file);
-      setData(parsed);
-      setStats(calculateStats(parsed));
+      // Batch add to firestore
+      await firestoreService.batchAddPersonnel(parsed);
+      await refreshData();
       setSearchTerm('');
       setDashboardFilter(null);
       setFilterType('all');
     } catch (error) {
-      console.error('Error parsing file:', error);
-      alert('خطا در پردازش فایل. لطفا فرمت فایل را بررسی کنید.');
+      console.error('Error processing file:', error);
+      alert('خطا در پردازش فایل یا ذخیره در دیتابیس.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSaveEdit = () => {
+  const handleSaveEdit = async () => {
     if (!editForm) return;
     
-    setData(prev => {
-      const newData = prev.map(p => 
-        (p.id === editForm.id && p.firstName === editForm.firstName && p.lastName === editForm.lastName) 
-          ? editForm 
-          : p
-      );
-      // Small delay to ensure state is updated before recalculating stats
-      setStats(calculateStats(newData));
-      return newData;
-    });
-    
-    setSelectedPerson(editForm);
-    setIsEditing(false);
+    setIsLoading(true);
+    try {
+      if (editForm.firestoreId) {
+        await firestoreService.updatePerson(editForm.firestoreId, editForm);
+      } else {
+        await firestoreService.addPerson(editForm);
+      }
+      await refreshData();
+      setSelectedPerson(editForm);
+      setIsEditing(false);
+    } catch (err) {
+      console.error('Error saving:', err);
+      alert('خطا در ذخیره سازی.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeletePerson = async (firestoreId?: string) => {
+    if (!firestoreId) return;
+    if (!confirm('آیا از حذف این مورد اطمینان دارید؟')) return;
+
+    setIsLoading(true);
+    try {
+      await firestoreService.deletePerson(firestoreId);
+      await refreshData();
+      setSelectedPerson(null);
+    } catch (err) {
+      console.error('Error deleting:', err);
+      alert('خطا در حذف.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
   };
 
   const startEditing = () => {
     setEditForm(selectedPerson);
+    setIsEditing(true);
+  };
+
+  const addNewPerson = () => {
+    const newPerson: PersonnelData = {
+      id: '',
+      firstName: '',
+      lastName: '',
+      dependentsCount: 0,
+      gender: 'مرد',
+      nationalId: '',
+      birthDate: '',
+      age: 0,
+      fatherName: '',
+      idNumber: '',
+      status: 'شاغل',
+      relationCode: '1',
+      phoneNumber: '',
+      relation: 'اصلی',
+      diseaseType: 'سالم',
+      experienceYears: 0,
+      workGroup: '',
+      unit: '',
+      position: '',
+      miningExpDays: 0
+    };
+    setEditForm(newPerson);
+    setSelectedPerson(newPerson);
     setIsEditing(true);
   };
 
@@ -580,25 +671,39 @@ export default function App() {
     </div>
   );
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0B] flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-[#FFB000] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Login onSuccess={refreshData} />;
+  }
+
   return (
-    <div className="min-h-screen bg-[#0A0A0B] font-sans text-[#E0E0E0] pb-20 selection:bg-[#FFB000] selection:text-[#0A0A0B]">
+    <div className="min-h-screen bg-[#0A0A0B] font-sans text-[#E0E0E0] pb-20 selection:bg-[#FFB000] selection:text-[#0A0A0B]" dir="rtl">
       {/* Header */}
-      <header className="bg-[#0A0A0B] border-b border-[#2C2C2E] sticky top-0 z-10 px-6 py-4 flex items-center justify-between">
+      <header className="bg-[#0A0A0B] border-b border-[#2C2C2E] sticky top-0 z-40 px-6 py-4 flex items-center justify-between backdrop-blur-md bg-opacity-80">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-[#FFB000] rounded flex items-center justify-center text-[#0A0A0B] font-bold text-xl shadow-lg shadow-[#FFB000]/10">
             M
           </div>
           <div>
             <h1 className="text-2xl font-serif-header font-bold text-[#FFFFFF] tracking-tight">سامانه تحلیل هوشمند منابع انسانی</h1>
-            <p className="text-[10px] text-[#8E8E93] font-medium tracking-widest uppercase">مدیریت استراتژیک سرمایههای انسانی - مجتمع معدنی مرکزی</p>
+            <p className="text-[10px] text-[#8E8E93] font-medium tracking-widest uppercase">مدیریت استراتژیک سرمایههای انسانی - ادمین: {user.email}</p>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="px-4 py-2 bg-[#1C1C1E] rounded-md border border-[#2C2C2E] text-xs hidden md:block">
-            <span className="text-[#8E8E93] ml-2">وضعیت سیستم:</span>
-            <span className="font-mono text-[#22C55E]">OFFLINE MODE</span>
-          </div>
+          <button 
+            onClick={handleLogout}
+            className="p-2 hover:bg-[#2C2C2E] rounded-full text-[#8E8E93] hover:text-red-500 transition-colors"
+          >
+            <LogOut size={20} />
+          </button>
           <label className="relative cursor-pointer group">
             <input 
               type="file" 
@@ -615,7 +720,7 @@ export default function App() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
-        {!data.length ? (
+        {!data || !data.length ? (
           <div className="h-[60vh] flex flex-col items-center justify-center text-center">
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
@@ -627,24 +732,13 @@ export default function App() {
             </motion.div>
             <h2 className="text-3xl font-serif-header font-bold mb-2 text-[#FFFFFF]">خوش آمدید</h2>
             <p className="text-[#8E8E93] max-w-sm mb-8 font-vazir leading-relaxed">
-              لطفاً فایل اکسل حاوی اطلاعات پرسنلی و افراد تحت تکفل را جهت شروع فرآیند تحلیل و گزارش‌گیری بارگذاری نمایید.
+              هنوز هیچ داده‌ای ثبت نشده است. لطفاً فایل اکسل پرسنل را بارگذاری کنید.
             </p>
-            <button 
-              onClick={() => {
-                const sample = [
-                  { id: '1001', firstName: 'علی', lastName: 'رضایی', dependentsCount: 2, gender: 'مرد', nationalId: '123', birthDate: '1365/01/01', age: 40, fatherName: 'حسن', idNumber: '1', status: 'شاغل', relationCode: '1', phoneNumber: '0912', relation: 'خودش', diseaseType: 'سالم', experienceYears: 12, workGroup: 'فنی', unit: 'استخراج', position: 'اپراتور شاول', miningExpDays: 3000 },
-                  { id: '1001', firstName: 'زهرا', lastName: 'رضایی', dependentsCount: 0, gender: 'زن', nationalId: '126', birthDate: '1368/02/15', age: 37, fatherName: 'عباس', idNumber: '4', status: '', relationCode: '2', phoneNumber: '', relation: 'همسر', diseaseType: 'سالم', experienceYears: 0, workGroup: '', unit: '', position: '', miningExpDays: 0 },
-                  { id: '1001', firstName: 'امیر', lastName: 'رضایی', dependentsCount: 0, gender: 'مرد', nationalId: '127', birthDate: '1395/06/10', age: 10, fatherName: 'علی', idNumber: '5', status: '', relationCode: '3', phoneNumber: '', relation: 'فرزند', diseaseType: 'سالم', experienceYears: 0, workGroup: '', unit: '', position: '', miningExpDays: 0 },
-                  { id: '1002', firstName: 'مریم', lastName: 'احمدی', dependentsCount: 1, gender: 'زن', nationalId: '124', birthDate: '1370/05/10', age: 35, fatherName: 'حسین', idNumber: '2', status: 'شاغل', relationCode: '1', phoneNumber: '0913', relation: 'پرسنل', diseaseType: 'سالم', experienceYears: 8, workGroup: 'اداری', unit: 'منابع انسانی', position: 'کارشناس', miningExpDays: 500 },
-                  { id: '1003', firstName: 'سعید', lastName: 'کریمی', dependentsCount: 1, gender: 'مرد', nationalId: '125', birthDate: '1360/10/20', age: 45, fatherName: 'محمد', idNumber: '3', status: 'شاغل', relationCode: '1', phoneNumber: '0914', relation: 'اصلی', diseaseType: 'آسم', experienceYears: 20, workGroup: 'فنی', unit: 'نگهداری', position: 'تکنسین برق', miningExpDays: 6000 },
-                ];
-                setData(sample);
-                setStats(calculateStats(sample));
-              }}
-              className="text-[#FFB000] font-bold text-sm hover:underline"
-            >
-              بارگذاری داده‌های نمونه برای تست
-            </button>
+            <label className="cursor-pointer bg-[#FFB000] hover:bg-[#FFC040] text-[#0A0A0B] px-8 py-4 rounded-xl font-bold text-sm transition-all shadow-xl shadow-[#FFB000]/20 flex items-center gap-3">
+              <Plus size={20} />
+              بارگذاری اولین فایل اکسل
+              <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleFileUpload} />
+            </label>
           </div>
         ) : (
           <div className="space-y-8">
@@ -703,6 +797,7 @@ export default function App() {
                     dashboardFilter={dashboardFilter}
                     setDashboardFilter={setDashboardFilter}
                     setSelectedPerson={setSelectedPerson}
+                    addNewPerson={addNewPerson}
                   />
                 </motion.div>
               )}
@@ -768,12 +863,22 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2">
                   {!isEditing && (
-                    <button 
-                      onClick={startEditing}
-                      className="px-4 py-2 bg-[#FFB000]/10 text-[#FFB000] border border-[#FFB000]/30 rounded-lg text-xs font-bold hover:bg-[#FFB000]/20 transition-colors"
-                    >
-                      ویرایش اطلاعات
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => handleDeletePerson(selectedPerson.firestoreId)}
+                        className="p-2 bg-red-500/10 text-red-500 border border-red-500/30 rounded-lg hover:bg-red-500/20 transition-colors"
+                        title="حذف رکورد"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                      <button 
+                        onClick={startEditing}
+                        className="px-4 py-2 bg-[#FFB000]/10 text-[#FFB000] border border-[#FFB000]/30 rounded-lg text-xs font-bold hover:bg-[#FFB000]/20 transition-colors flex items-center gap-2"
+                      >
+                        <Save size={14} />
+                        ویرایش اطلاعات
+                      </button>
+                    </div>
                   )}
                   <button 
                     onClick={() => {
@@ -791,6 +896,26 @@ export default function App() {
                 {isEditing && editForm ? (
                   <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <EditField 
+                        label="کد پرسنلی" 
+                        value={editForm.id} 
+                        onChange={(v) => setEditForm({...editForm, id: v})} 
+                      />
+                      <EditField 
+                        label="نام" 
+                        value={editForm.firstName} 
+                        onChange={(v) => setEditForm({...editForm, firstName: v})} 
+                      />
+                      <EditField 
+                        label="نام خانوادگی" 
+                        value={editForm.lastName} 
+                        onChange={(v) => setEditForm({...editForm, lastName: v})} 
+                      />
+                      <EditField 
+                        label="کد ملی" 
+                        value={editForm.nationalId} 
+                        onChange={(v) => setEditForm({...editForm, nationalId: v})} 
+                      />
                       <EditField 
                         label="شماره موبایل" 
                         value={editForm.phoneNumber} 
@@ -1057,8 +1182,23 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
   );
 }
 
+function EditField({ label, value, onChange, placeholder }: { label: string, value: string, onChange: (v: string) => void, placeholder?: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] text-[#8E8E93] font-medium uppercase tracking-wider">{label}</label>
+      <input 
+        type="text" 
+        value={value || ''} 
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="bg-[#0A0A0B] border border-[#2C2C2E] text-[#E0E0E0] p-2 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#FFB000] transition-all"
+      />
+    </div>
+  );
+}
+
 function PersonnelList({ 
-  filteredPersonnel, searchTerm, setSearchTerm, filterType, setFilterType, dashboardFilter, setDashboardFilter, setSelectedPerson 
+  filteredPersonnel, searchTerm, setSearchTerm, filterType, setFilterType, dashboardFilter, setDashboardFilter, setSelectedPerson, addNewPerson 
 }: any) {
   return (
     <Card title="فهرست پرسنل">
@@ -1079,6 +1219,13 @@ function PersonnelList({
             <button onClick={() => { setFilterType('dependents'); setDashboardFilter(null); }} className={cn("px-4 py-2 rounded text-[10px] font-bold uppercase transition-all", (filterType === 'dependents' && !dashboardFilter) ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>تحت تکفل</button>
             <button onClick={() => { setFilterType('all'); setDashboardFilter(null); }} className={cn("px-4 py-2 rounded text-[10px] font-bold uppercase transition-all", (filterType === 'all' && !dashboardFilter) ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>همه موارد</button>
           </div>
+          <button 
+                onClick={addNewPerson}
+                className="flex items-center gap-2 bg-[#FFB000] text-[#0A0A0B] px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#FFC040] transition-colors"
+          >
+            <Plus size={16} />
+            افزودن فرد جدید
+          </button>
         </div>
 
         {dashboardFilter && (
@@ -1231,20 +1378,6 @@ function DetailItem({ label, value }: { label: string, value: string | number })
     <div className="flex flex-col gap-1">
       <span className="text-[10px] text-[#8E8E93] font-medium uppercase tracking-wider">{label}</span>
       <span className="text-sm text-[#E0E0E0] font-bold">{String(value) || '-'}</span>
-    </div>
-  );
-}
-
-function EditField({ label, value, onChange }: { label: string, value: string, onChange: (v: string) => void }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] text-[#8E8E93] font-medium uppercase tracking-wider">{label}</label>
-      <input 
-        type="text" 
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="bg-[#0A0A0B] border border-[#2C2C2E] text-[#E0E0E0] p-2 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#FFB000]"
-      />
     </div>
   );
 }

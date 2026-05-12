@@ -5,6 +5,7 @@
 
 export interface PersonnelData {
   id: string; // کد پرسنلی
+  firestoreId?: string; // ID در دیتابیس
   firstName: string; // نام
   lastName: string; // نام خانوادگی
   dependentsCount: number; // تعداد تحت تکفل

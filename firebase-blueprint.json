@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "personnel": {
+      "title": "Personnel",
+      "description": "Records for employees and their dependents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Personnel ID" },
+        "firstName": { "type": "string", "description": "First Name" },
+        "lastName": { "type": "string", "description": "Last Name" },
+        "dependentsCount": { "type": "number", "description": "Number of dependents" },
+        "gender": { "type": "string", "description": "Gender" },
+        "nationalId": { "type": "string", "description": "National ID" },
+        "birthDate": { "type": "string", "description": "Birth Date" },
+        "age": { "type": "number", "description": "Calculated Age" },
+        "fatherName": { "type": "string", "description": "Father's Name" },
+        "idNumber": { "type": "string", "description": "ID Number" },
+        "status": { "type": "string", "description": "Status" },
+        "relationCode": { "type": "string", "description": "Relation Code" },
+        "phoneNumber": { "type": "string", "description": "Phone Number" },
+        "relation": { "type": "string", "description": "Relation" },
+        "diseaseType": { "type": "string", "description": "Disease Type" },
+        "experienceYears": { "type": "number", "description": "Years of experience" },
+        "workGroup": { "type": "string", "description": "Work Group" },
+        "unit": { "type": "string", "description": "Unit" },
+        "position": { "type": "string", "description": "Position" },
+        "miningExpDays": { "type": "number", "description": "Mining experience in days" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Last update timestamp" },
+        "createdBy": { "type": "string", "description": "User UID who created the record" }
+      },
+      "required": ["firstName", "lastName", "nationalId"]
+    },
+    "admins": {
+      "title": "Admins",
+      "description": "System administrators with full access",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "role": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "personnel": {
+      "schema": "personnel",
+      "description": "Collection of all personnel records"
+    },
+    "admins": {
+      "schema": "admins",
+      "description": "Collection of authorized admin UIDs"
+    }
+  }
+}
