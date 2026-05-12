@@ -11,7 +11,7 @@ This project is a web-based system for managing and analyzing personnel data bas
 To install everything automatically on an Ubuntu server, run the following command:
 
 ```bash
-sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO_NAME/main/install.sh)"
+sudo bash -c "$(curl -fsSL https://github.com/mohamadkazemt/-/blob/main/install.sh)"
 ```
 > **نکته:** حتماً قبل از اجرا، آدرس مخزن گیت‌هاب خود را در دستور بالا جایگزین کنید.
 > **Note:** Replace the GitHub URL with your actual repository URL before running.
