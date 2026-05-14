@@ -56,6 +56,7 @@ export const parseExcelData = (file: File): Promise<PersonnelData[]> => {
           const rel = String(findValue(row, ['نسبت', 'نوع نسبت', 'شرح نسبت', 'نسبت با سرپرست']) || '');
           const relCode = String(findValue(row, ['کد نسبت', 'کد قرابت']) || '');
           const birthStr = String(findValue(row, ['تاریخ تولد', 'تاريخ تولد']) || '');
+          const hireDateStr = String(findValue(row, ['تاریخ استخدام', 'تاریخ شروع به کار', 'تاريخ استخدام', 'Hire Date']) || '');
           
           // Persian to English digits for numbers
           const cleanNum = (val: any) => {
@@ -65,13 +66,45 @@ export const parseExcelData = (file: File): Promise<PersonnelData[]> => {
           };
 
           const daysExp = cleanNum(findValue(row, ['سابقه کار معدنی (روز)', 'سابقه معدنی', 'سابقه معدن', 'سابقه (روز)']));
-          const yearsExp = cleanNum(findValue(row, ['سابقه', 'سابقه کار']));
+          let yearsExp = cleanNum(findValue(row, ['سابقه', 'سابقه کار']));
+
+          // If experience is suspiciously high (e.g. > 1000), it might be days instead of years
+          if (yearsExp > 100) {
+            yearsExp = Math.round((yearsExp / 365) * 10) / 10;
+          }
 
           // If day-based experience is provided, convert it to years for the main field
-          const finalYears = daysExp > 0 ? Math.round((daysExp / 365) * 10) / 10 : yearsExp;
+          let finalYears = daysExp > 0 ? Math.round((daysExp / 365) * 10) / 10 : yearsExp;
           
-          const unit = String(findValue(row, ['واحد', 'واحد سازمانی', 'نام واحد', 'محل خدمت', 'قسمت', 'بخش', 'Unit']) || '');
-          const position = String(findValue(row, ['سمت', 'عنوان شغلی', 'پست سازمانی', 'شغل', 'Position']) || '');
+          // If we have hire date, we can optionally calculate experience if it's missing or to verify
+          if (finalYears === 0 && hireDateStr) {
+            const hire = moment(toEnglishDigits(hireDateStr), ['jYYYY/jMM/jDD', 'jYYYY-jMM-jDD', 'jYYYYjMMjDD']);
+            if (hire.isValid()) {
+                finalYears = Math.round(moment().diff(hire, 'years', true) * 10) / 10;
+            }
+          }
+          
+          const normalizePersian = (str: string) => {
+            if (!str) return '';
+            return str
+              .trim()
+              .replace(/ی/g, 'ی') // Standard Farsi Ye
+              .replace(/ي/g, 'ی') // Arabic Ye to Farsi
+              .replace(/ک/g, 'ک') // Standard Farsi Ke
+              .replace(/ك/g, 'ک') // Arabic Ke to Farsi
+              .replace(/\u200c/g, ' ') // ZWNJ to space for better grouping
+              .replace(/\s+/g, ' '); // Multiple spaces to single
+          };
+
+          const unit = normalizePersian(String(findValue(row, ['واحد', 'واحد سازمانی', 'نام واحد', 'محل خدمت', 'قسمت', 'بخش', 'Unit']) || ''));
+          const positionValue = normalizePersian(String(findValue(row, ['سمت', 'عنوان شغلی', 'پست سازمانی', 'شغل', 'Position']) || ''));
+          const jobTitleKerman = normalizePersian(String(findValue(row, ['عنوان شغل کرمان', 'شغل کرمان']) || ''));
+          const workshopPosition = normalizePersian(String(findValue(row, ['سمت کارگاه', 'سمت کارگاهی']) || ''));
+          
+          let finalPosition = positionValue || 'نامشخص';
+          if ((finalPosition === 'نامشخص' || !finalPosition) && jobTitleKerman && workshopPosition && jobTitleKerman === workshopPosition) {
+            finalPosition = jobTitleKerman;
+          }
           
           return {
             id: String(findValue(row, ['کد پرسنلی', 'شماره پرسنلی', 'کد']) || index),
@@ -92,8 +125,11 @@ export const parseExcelData = (file: File): Promise<PersonnelData[]> => {
             experienceYears: finalYears,
             workGroup: String(findValue(row, ['گروه کاری', 'گروه']) || 'سایر'),
             unit: unit || 'نامشخص',
-            position: position || 'نامشخص',
+            position: finalPosition,
+            jobTitleKerman: jobTitleKerman,
+            workshopPosition: workshopPosition,
             miningExpDays: daysExp,
+            hireDate: hireDateStr,
           };
         });
 
@@ -143,9 +179,13 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
       positionDistribution: [],
       experienceStats: { avgTotal: 0, avgMining: 0, categories: [] },
       healthStats: [],
-      familyStats: { avgDependents: 0 },
+      familyStats: { 
+        avgDependents: 0,
+        breakdown: { children: 0, spouse: 0, mother: 0, father: 0, other: 0 }
+      },
       avgAge: 0,
       avgExperienceByUnit: [],
+      mismatch: 0,
     };
   }
 
@@ -191,7 +231,13 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
 
   employees.forEach(p => {
     units[p.unit] = (units[p.unit] || 0) + 1;
-    positions[p.position] = (positions[p.position] || 0) + 1;
+    
+    // Apply position inference logic for stats as well
+    let effectivePosition = p.position;
+    if ((effectivePosition === 'نامشخص' || !effectivePosition) && p.jobTitleKerman && p.workshopPosition && p.jobTitleKerman === p.workshopPosition) {
+      effectivePosition = p.jobTitleKerman;
+    }
+    positions[effectivePosition] = (positions[effectivePosition] || 0) + 1;
     
     unitExperienceSum[p.unit] = (unitExperienceSum[p.unit] || 0) + p.experienceYears;
     unitExperienceCount[p.unit] = (unitExperienceCount[p.unit] || 0) + 1;
@@ -227,6 +273,36 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
 
   // Family
   const avgDependents = totalEmployees > 0 ? employees.reduce((acc, p) => acc + p.dependentsCount, 0) / totalEmployees : 0;
+  
+  const dependentBreakdown = {
+    children: 0,
+    spouse: 0,
+    mother: 0,
+    father: 0,
+    other: 0,
+  };
+
+  dependents.forEach(d => {
+    const rel = (d.relation || '').trim();
+    if (rel.includes('فرزند') || rel.includes('پسر') || rel.includes('دختر')) {
+      dependentBreakdown.children++;
+    } else if (rel.includes('همسر')) {
+      dependentBreakdown.spouse++;
+    } else if (rel.includes('مادر')) {
+      dependentBreakdown.mother++;
+    } else if (rel.includes('پدر')) {
+      dependentBreakdown.father++;
+    } else {
+      dependentBreakdown.other++;
+    }
+  });
+
+  // Mismatch Count
+  const mismatch = employees.filter(p => {
+    const titleK = (p.jobTitleKerman || '').trim();
+    const titleW = (p.workshopPosition || '').trim();
+    return !!titleK && !!titleW && titleK !== titleW;
+  }).length;
 
   return {
     totalRecords,
@@ -244,8 +320,10 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
     healthStats: Object.entries(healthIssues).map(([name, count]) => ({ name, count })),
     familyStats: {
       avgDependents,
+      breakdown: dependentBreakdown,
     },
     avgAge,
     avgExperienceByUnit,
+    mismatch,
   };
 };

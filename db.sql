@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS personnel (
     last_name VARCHAR(100) NOT NULL,
     dependents_count INT DEFAULT 0,
     gender VARCHAR(20),
-    national_id VARCHAR(10) NOT NULL,
+    national_id VARCHAR(10) NOT NULL UNIQUE,
     birth_date VARCHAR(20),
     age INT,
     father_name VARCHAR(100),
@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS personnel (
     unit VARCHAR(100),
     position VARCHAR(100),
     mining_exp_days INT DEFAULT 0,
+    hire_date VARCHAR(20),
+    job_title_kerman VARCHAR(255),
+    workshop_position VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );

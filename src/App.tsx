@@ -41,6 +41,7 @@ import {
   Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
+import moment from 'jalali-moment';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiService } from './services/apiService';
@@ -52,7 +53,70 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const normalizePersian = (str: string) => {
+  if (!str) return '';
+  return str
+    .trim()
+    .replace(/ی/g, 'ی') // Standard Farsi Ye
+    .replace(/ي/g, 'ی') // Arabic Ye to Farsi
+    .replace(/ک/g, 'ک') // Standard Farsi Ke
+    .replace(/ك/g, 'ک') // Arabic Ke to Farsi
+    .replace(/\u200c/g, ' ') // ZWNJ to space
+    .replace(/\s+/g, ' '); // Multiple spaces to single
+};
+
 const COLORS = ['#FFB000', '#E0E0E0', '#8E8E93', '#1C1C1E', '#3A3A3C'];
+
+const formatDecimalYears = (decimalYears: number | string) => {
+  const yrs = parseFloat(String(decimalYears));
+  if (isNaN(yrs) || yrs <= 0) return '-';
+  
+  const years = Math.floor(yrs);
+  const remainderDays = Math.round((yrs - years) * 365.25);
+  
+  let result = '';
+  if (years > 0) result += `${years} سال`;
+  if (remainderDays > 0) {
+    if (result) result += ' و ';
+    result += `${remainderDays} روز`;
+  }
+  
+  return result || '۰ روز';
+};
+
+const calculateExperience = (hireDate: string) => {
+  if (!hireDate) return '-';
+  try {
+    const start = moment(hireDate, 'jYYYY/jMM/jDD');
+    if (!start.isValid()) return '-';
+    
+    const now = moment();
+    const diffDays = now.diff(start, 'days');
+    
+    if (diffDays < 0) return 'هنوز شروع نشده';
+    
+    const y = Math.floor(diffDays / 365.25);
+    const m = Math.floor((diffDays % 365.25) / 30.4375);
+    const d = Math.floor((diffDays % 365.25) % 30.4375);
+    
+    let result = '';
+    if (y > 0) result += `${y} سال `;
+    if (m > 0) {
+      if (result) result += 'و ';
+      result += `${m} ماه `;
+    }
+    if (d > 0) {
+      if (result) result += 'و ';
+      result += `${d} روز`;
+    }
+    
+    if (!result) result = 'کمتر از یک روز';
+    
+    return result;
+  } catch (e) {
+    return '-';
+  }
+};
 
 export default function App() {
   const [user, setUser] = useState<{ email: string } | null>(null);
@@ -66,7 +130,7 @@ export default function App() {
   const [selectedPerson, setSelectedPerson] = useState<PersonnelData | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<PersonnelData | null>(null);
-  const [dashboardFilter, setDashboardFilter] = useState<{ key: string, value: string } | null>(null);
+  const [dashboardFilter, setDashboardFilter] = useState<any>(null);
   const [reportConfig, setReportConfig] = useState<{ type: 'unit' | 'position', value: string }>({ type: 'unit', value: '' });
 
   useEffect(() => {
@@ -87,6 +151,14 @@ export default function App() {
     checkAuth();
   }, []);
 
+  const handleLoginSuccess = async () => {
+    const email = localStorage.getItem('user_email');
+    if (email) {
+      setUser({ email });
+      await refreshData();
+    }
+  };
+
   const refreshData = async () => {
     const token = localStorage.getItem('auth_token');
     if (!token) return;
@@ -96,10 +168,12 @@ export default function App() {
       const personnel = await apiService.getAllPersonnel();
       setData(personnel);
       setStats(calculateStats(personnel));
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching data:', err);
-      if (err instanceof Error && err.message.includes('Unauthorized')) {
+      if (err.message === 'Unauthorized' || err.message === 'Forbidden') {
         handleLogout();
+      } else {
+        alert('خطا در دریافت اطلاعات: ' + (err.message || 'Unknown error'));
       }
     } finally {
       setIsLoading(false);
@@ -118,9 +192,10 @@ export default function App() {
       setSearchTerm('');
       setDashboardFilter(null);
       setFilterType('all');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error processing file:', error);
-      alert('خطا در پردازش فایل یا ذخیره در دیتابیس.');
+      const msg = error.message || 'خطا در پردازش فایل یا ذخیره در دیتابیس.';
+      alert(msg);
     } finally {
       setIsLoading(false);
     }
@@ -195,7 +270,8 @@ export default function App() {
       workGroup: '',
       unit: '',
       position: '',
-      miningExpDays: 0
+      miningExpDays: 0,
+      hireDate: ''
     };
     setEditForm(newPerson);
     setSelectedPerson(newPerson);
@@ -206,19 +282,30 @@ export default function App() {
     if (!data || !Array.isArray(data)) return [];
     return data.filter(p => {
       if (!p) return false;
-      const fName = String(p.firstName || '').toLowerCase();
-      const lName = String(p.lastName || '').toLowerCase();
-      const pId = String(p.id || '').toLowerCase();
-      const pPos = String(p.position || '').toLowerCase();
-      const pUnit = String(p.unit || '').toLowerCase();
-      const sTerm = (searchTerm || '').toLowerCase();
+      const fName = normalizePersian(p.firstName || '');
+      const lName = normalizePersian(p.lastName || '');
+      const pId = normalizePersian(p.id || '');
+      const relation = normalizePersian(p.relation || '');
+
+      const getInferredPosition = (p: PersonnelData) => {
+        let pos = p.position || 'نامشخص';
+        if ((pos === 'نامشخص' || !pos) && p.jobTitleKerman && p.workshopPosition && p.jobTitleKerman === p.workshopPosition) {
+          return p.jobTitleKerman;
+        }
+        return pos;
+      };
+
+      const pPos = normalizePersian(getInferredPosition(p));
+      const pUnit = normalizePersian(p.unit || '');
+      const sTerm = normalizePersian(searchTerm || '');
 
       const matchesSearch = 
         fName.includes(sTerm) || 
         lName.includes(sTerm) || 
         pId.includes(sTerm) ||
         pPos.includes(sTerm) ||
-        pUnit.includes(sTerm);
+        pUnit.includes(sTerm) ||
+        (filterType === 'dependents' && relation.includes(sTerm));
       
       if (!matchesSearch) return false;
 
@@ -230,28 +317,55 @@ export default function App() {
 
       if (!matchesCategory) return false;
 
-      // Dashboard filters
       if (dashboardFilter) {
-        if (dashboardFilter.key === 'unit' && p.unit !== dashboardFilter.value) return false;
-        if (dashboardFilter.key === 'gender' && p.gender !== dashboardFilter.value) return false;
-        if (dashboardFilter.key === 'ageRange') {
-          const age = p.age || 0;
-          if (dashboardFilter.value === 'زیر ۳۰' && !(age < 30 && age > 0)) return false;
-          if (dashboardFilter.value === '۳۰ تا ۴۰' && !(age >= 30 && age < 40)) return false;
-          if (dashboardFilter.value === '۴۰ تا ۵۰' && !(age >= 40 && age < 50)) return false;
-          if (dashboardFilter.value === '۵۰ به بالا' && !(age >= 50)) return false;
-        }
-        if (dashboardFilter.key === 'experienceRange') {
-          const exp = p.experienceYears || 0;
-          if (dashboardFilter.value === 'کم (زیر ۵)' && !(exp < 5)) return false;
-          if (dashboardFilter.value === 'متوسط (۵ تا ۱۵)' && !(exp >= 5 && exp < 15)) return false;
-          if (dashboardFilter.value === 'زیاد (بالای ۱۵)' && !(exp >= 15)) return false;
+        if (typeof dashboardFilter === 'object') {
+          if (dashboardFilter.key === 'mismatch') {
+            const titleK = (p.jobTitleKerman || '').trim();
+            const titleW = (p.workshopPosition || '').trim();
+            return !!titleK && !!titleW && titleK !== titleW;
+          }
+          if (dashboardFilter.key === 'unit' && p.unit !== dashboardFilter.value) return false;
+          if (dashboardFilter.key === 'gender' && p.gender !== dashboardFilter.value) return false;
+          if (dashboardFilter.key === 'ageRange') {
+            const age = p.age || 0;
+            if (dashboardFilter.value === 'زیر ۳۰' && !(age < 30 && age > 0)) return false;
+            if (dashboardFilter.value === '۳۰ تا ۴۰' && !(age >= 30 && age < 40)) return false;
+            if (dashboardFilter.value === '۴۰ تا ۵۰' && !(age >= 40 && age < 50)) return false;
+            if (dashboardFilter.value === '۵۰ به بالا' && !(age >= 50)) return false;
+          }
+          if (dashboardFilter.key === 'experienceRange') {
+            const exp = p.experienceYears || 0;
+            if (dashboardFilter.value === 'کم (زیر ۵)' && !(exp < 5)) return false;
+            if (dashboardFilter.value === 'متوسط (۵ تا ۱۵)' && !(exp >= 5 && exp < 15)) return false;
+            if (dashboardFilter.value === 'زیاد (بالای ۱۵)' && !(exp >= 15)) return false;
+          }
+          if (dashboardFilter.key === 'position') {
+            let currentPos = p.position || 'نامشخص';
+            if ((currentPos === 'نامشخص' || !currentPos) && p.jobTitleKerman && p.workshopPosition && p.jobTitleKerman === p.workshopPosition) {
+              currentPos = p.jobTitleKerman;
+            }
+            if (currentPos !== dashboardFilter.value) return false;
+            if (dashboardFilter.unit) {
+              const currentUnit = p.unit || 'نامشخص';
+              if (currentUnit !== dashboardFilter.unit) return false;
+            }
+          }
+        } else if (dashboardFilter === 'mismatch') {
+          // Fallback for old string type
+          const titleK = (p.jobTitleKerman || '').trim();
+          const titleW = (p.workshopPosition || '').trim();
+          return !!titleK && !!titleW && titleK !== titleW;
         }
       }
 
       return true;
     });
   }, [data, searchTerm, filterType, dashboardFilter]);
+
+  const selectedPersonDependents = useMemo(() => {
+    if (!selectedPerson || !data || !Array.isArray(data)) return [];
+    return data.filter(p => p.id === selectedPerson.id && p.nationalId !== selectedPerson.nationalId);
+  }, [selectedPerson, data]);
 
   const statsSection = stats && (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -687,7 +801,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <Login onSuccess={refreshData} />;
+    return <Login onSuccess={handleLoginSuccess} />;
   }
 
   return (
@@ -779,6 +893,7 @@ export default function App() {
                 >
                   <StatsDashboard 
                     stats={stats} 
+                    data={data}
                     setDashboardFilter={setDashboardFilter}
                     setActiveTab={setActiveTab}
                     setFilterType={setFilterType}
@@ -948,6 +1063,12 @@ export default function App() {
                         value={editForm.workGroup} 
                         onChange={(v) => setEditForm({...editForm, workGroup: v})} 
                       />
+                      <EditField 
+                        label="تاریخ استخدام کارآوران" 
+                        value={editForm.hireDate} 
+                        onChange={(v) => setEditForm({...editForm, hireDate: v})} 
+                        placeholder="۱۴۰۰/۰۱/۰۱"
+                      />
                       <div className="flex flex-col gap-1">
                         <label className="text-[10px] text-[#8E8E93] font-medium uppercase tracking-wider">وضعیت سلامت</label>
                         <select 
@@ -986,6 +1107,8 @@ export default function App() {
                       <DetailItem label="شماره تماس" value={selectedPerson.phoneNumber} />
                       <DetailItem label="تاریخ تولد" value={selectedPerson.birthDate} />
                       <DetailItem label="سن" value={`${selectedPerson.age} سال`} />
+                      <DetailItem label="تاریخ استخدام" value={selectedPerson.hireDate || '-'} />
+                      <DetailItem label="سابقه در کارآوران" value={calculateExperience(selectedPerson.hireDate || '')} />
                       <DetailItem label="جنسیت" value={selectedPerson.gender} />
                       <DetailItem label="نسبت" value={selectedPerson.relation || 'پرسنل'} />
                     </div>
@@ -994,8 +1117,27 @@ export default function App() {
                     <div className="space-y-4">
                       <h4 className="text-[10px] font-bold text-[#FFB000] uppercase tracking-widest mb-4">اطلاعات شغلی</h4>
                       <DetailItem label="واحد" value={selectedPerson.unit} />
-                      <DetailItem label="سمت" value={selectedPerson.position} />
-                      <DetailItem label="سابقه (سال)" value={`${selectedPerson.experienceYears} سال`} />
+                      <DetailItem label="سمت (فایل)" value={selectedPerson.position} />
+                      {((selectedPerson.position === 'نامشخص' || !selectedPerson.position) && selectedPerson.jobTitleKerman && selectedPerson.workshopPosition && selectedPerson.jobTitleKerman === selectedPerson.workshopPosition) && (
+                        <div className="bg-[#FFB000]/5 border border-[#FFB000]/20 p-2 rounded flex items-start gap-2">
+                          <Lightbulb size={14} className="text-[#FFB000] shrink-0 mt-0.5" />
+                          <div>
+                            <p className="text-[10px] text-[#FFB000] font-bold">سمت تشخیص داده شده:</p>
+                            <p className="text-xs text-[#E0E0E0]">{selectedPerson.jobTitleKerman}</p>
+                          </div>
+                        </div>
+                      )}
+                      <DetailItem 
+                        label="عنوان شغل کرمان" 
+                        value={selectedPerson.jobTitleKerman || '-'} 
+                        isWarning={!!(selectedPerson.jobTitleKerman || '').trim() && !!(selectedPerson.workshopPosition || '').trim() && (selectedPerson.jobTitleKerman || '').trim() !== (selectedPerson.workshopPosition || '').trim()}
+                      />
+                      <DetailItem 
+                        label="سمت کارگاه" 
+                        value={selectedPerson.workshopPosition || '-'} 
+                        isWarning={!!(selectedPerson.jobTitleKerman || '').trim() && !!(selectedPerson.workshopPosition || '').trim() && (selectedPerson.jobTitleKerman || '').trim() !== (selectedPerson.workshopPosition || '').trim()}
+                      />
+                      <DetailItem label="سابقه (سال)" value={formatDecimalYears(selectedPerson.experienceYears)} />
                       <DetailItem label="سابقه معدنی (روز)" value={`${selectedPerson.miningExpDays} روز`} />
                       <DetailItem label="گروه کاری" value={selectedPerson.workGroup} />
                       <DetailItem label="وضعیت" value={selectedPerson.status} />
@@ -1009,6 +1151,47 @@ export default function App() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Dependents Table */}
+                    {selectedPersonDependents.length > 0 && (
+                      <div className="md:col-span-2 mt-8 space-y-4">
+                        <h4 className="text-[10px] font-bold text-[#FFB000] uppercase tracking-widest flex items-center gap-2">
+                          <UsersList size={14} />
+                          افراد تحت تکفل ({selectedPersonDependents.length} نفر)
+                        </h4>
+                        <div className="overflow-hidden rounded-xl border border-[#2C2C2E] bg-[#0A0A0B]">
+                          <table className="w-full text-right border-collapse">
+                            <thead>
+                              <tr className="bg-[#1C1C1E] text-[#8E8E93] text-[9px] font-bold uppercase">
+                                <th className="px-4 py-3 border-b border-[#2C2C2E]">نام و نام خانوادگی</th>
+                                <th className="px-4 py-3 border-b border-[#2C2C2E]">نسبت</th>
+                                <th className="px-4 py-3 border-b border-[#2C2C2E]">کد ملی</th>
+                                <th className="px-4 py-3 border-b border-[#2C2C2E]">سن</th>
+                                <th className="px-4 py-3 border-b border-[#2C2C2E]">وضعیت سلامت</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#2C2C2E]">
+                              {selectedPersonDependents.map((dep, dIdx) => (
+                                <tr key={dep.nationalId || dIdx} className="hover:bg-[#1C1C1E] transition-colors">
+                                  <td className="px-4 py-3 text-sm font-bold text-[#FFFFFF]">{dep.firstName} {dep.lastName}</td>
+                                  <td className="px-4 py-3 text-[11px] text-[#FFB000] font-medium">{dep.relation}</td>
+                                  <td className="px-4 py-3 text-sm text-[#8E8E93] font-mono">{dep.nationalId}</td>
+                                  <td className="px-4 py-3 text-sm text-[#E0E0E0] tabular-nums">{dep.age} سال</td>
+                                  <td className="px-4 py-3">
+                                    <span className={cn(
+                                      "px-2 py-0.5 rounded text-[10px] font-bold",
+                                      dep.diseaseType === 'سالم' ? "bg-green-500/10 text-green-500" : "bg-red-500/10 text-red-500"
+                                    )}>
+                                      {dep.diseaseType}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1026,20 +1209,64 @@ export default function App() {
 }
 
 // Sub-components for better structural health and performance
-function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType, setSearchTerm }: { 
+function StatsDashboard({ stats, data, setDashboardFilter, setActiveTab, setFilterType, setSearchTerm }: { 
   stats: any, 
+  data: any[],
   setDashboardFilter: any, 
   setActiveTab: any, 
   setFilterType: any,
   setSearchTerm: any
 }) {
+  const [posUnitFilter, setPosUnitFilter] = useState<string>('همه واحدها');
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="کل جمعیت آماری" value={stats.totalRecords} icon={UsersList} subtitle="نفر" />
-        <StatCard title="کارکنان شاغل" value={stats.totalEmployees} icon={Briefcase} subtitle="نفر" />
-        <StatCard title="افراد تحت تکفل" value={stats.totalDependents} icon={Heart} subtitle="نفر" color="muted" />
-        <StatCard title="میانگین سن کارکنان" value={stats.avgAge.toFixed(1)} icon={CalendarDays} subtitle="سال" />
+        <button className="text-right h-full" onClick={() => { setDashboardFilter(null); setFilterType('all'); setActiveTab('personnel'); }}>
+          <StatCard title="کل جمعیت آماری" value={stats.totalRecords} icon={UsersList} subtitle="نفر" color="brand" />
+        </button>
+        <button className="text-right h-full" onClick={() => { setDashboardFilter(null); setFilterType('employees'); setActiveTab('personnel'); }}>
+          <StatCard title="کارکنان شاغل" value={stats.totalEmployees} icon={Briefcase} subtitle="نفر" color="brand" />
+        </button>
+        <button className="text-right h-full" onClick={() => { setDashboardFilter(null); setFilterType('dependents'); setActiveTab('personnel'); }}>
+          <StatCard title="افراد تحت تکفل" value={stats.totalDependents} icon={Heart} subtitle="نفر" color="muted" />
+        </button>
+        <button className="text-right h-full" onClick={() => { setDashboardFilter({ key: 'mismatch' }); setActiveTab('personnel'); setFilterType('employees'); setSearchTerm(''); }}>
+          <StatCard title="مغایرت سمت" value={stats.mismatch} icon={AlertTriangle} subtitle="نفر" color={stats.mismatch > 0 ? "warning" : "muted"} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+        <SmallStatCard 
+          title="فرزند" 
+          value={stats.familyStats.breakdown.children} 
+          icon={UsersList} 
+          onClick={() => { setSearchTerm('فرزند'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
+        <SmallStatCard 
+          title="همسر" 
+          value={stats.familyStats.breakdown.spouse} 
+          icon={UserRound} 
+          onClick={() => { setSearchTerm('همسر'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
+        <SmallStatCard 
+          title="مادر" 
+          value={stats.familyStats.breakdown.mother} 
+          icon={Heart} 
+          onClick={() => { setSearchTerm('مادر'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
+        <SmallStatCard 
+          title="پدر" 
+          value={stats.familyStats.breakdown.father} 
+          icon={Briefcase} 
+          onClick={() => { setSearchTerm('پدر'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
+        <SmallStatCard 
+          title="سایر نسبت‌ها" 
+          value={stats.familyStats.breakdown.other} 
+          icon={Activity} 
+          onClick={() => { setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1048,9 +1275,13 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
             <ResponsiveContainer width="100%" height="100%">
               <BarChart layout="vertical" data={[...stats.unitDistribution].sort((a, b) => b.value - a.value)} margin={{ left: 20, right: 40 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#2C2C2E" />
-                <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
+                <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} orientation="right" />
                 <XAxis type="number" hide />
-                <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
+                <Tooltip 
+                  cursor={{ fill: '#1C1C1E' }}
+                  contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E', textAlign: 'right' }} 
+                  itemStyle={{ color: '#FFB000' }}
+                />
                 <Bar 
                   dataKey="value" 
                   fill="#FFB000" 
@@ -1060,31 +1291,26 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
                     setDashboardFilter({ key: 'unit', value: entry.name });
                     setActiveTab('personnel');
                     setFilterType('employees');
+                    setSearchTerm('');
                   }}
+                  label={{ position: 'left', fill: '#E0E0E0', fontSize: 10, offset: 10 }}
                 />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
 
-        <Card title="هرم جنیستی و جوانی">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={stats.genderStats} cx="50%" cy="50%" innerRadius={50} outerRadius={70} paddingAngle={5} dataKey="value" label={({ name }) => name}>
-                  {stats.genderStats.map((_: any, index: number) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
-              </PieChart>
-            </ResponsiveContainer>
+        <Card title="توزیع زمانی و جوانی (بازه سنی)">
+          <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={stats.ageDistribution}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2C2C2E" />
                 <XAxis dataKey="range" tick={{ fill: '#8E8E93', fontSize: 10 }} axisLine={false} tickLine={false} />
                 <YAxis hide />
-                <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
+                <Tooltip 
+                  cursor={{ fill: '#1C1C1E' }}
+                  contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} 
+                />
                 <Bar 
                   dataKey="count" 
                   fill="#E0E0E0" 
@@ -1094,6 +1320,7 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
                     setDashboardFilter({ key: 'ageRange', value: entry.range });
                     setActiveTab('personnel');
                     setFilterType('employees');
+                    setSearchTerm('');
                   }}
                 />
               </BarChart>
@@ -1107,17 +1334,21 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
               <BarChart data={stats.experienceStats.categories} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#2C2C2E" />
                 <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
-                <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
+                <YAxis dataKey="name" type="category" width={100} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} orientation="right" />
+                <Tooltip 
+                  cursor={{ fill: '#1C1C1E' }}
+                  contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} 
+                />
                 <Bar 
                   dataKey="count" 
                   fill="#E0E0E0" 
-                  radius={[0, 4, 4, 0]} 
+                  radius={[4, 0, 0, 4]} 
                   className="cursor-pointer"
                   onClick={(entry) => {
                     setDashboardFilter({ key: 'experienceRange', value: entry.name });
                     setActiveTab('personnel');
                     setFilterType('employees');
+                    setSearchTerm('');
                   }}
                 />
               </BarChart>
@@ -1125,66 +1356,67 @@ function StatsDashboard({ stats, setDashboardFilter, setActiveTab, setFilterType
           </div>
         </Card>
 
-        <Card title="سمت‌های کلیدی و سلامت">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={[...stats.positionDistribution].sort((a, b) => b.value - a.value).slice(0, 8)} layout="vertical">
-                  <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" width={120} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
-                  <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
-                  <Bar 
-                    dataKey="value" 
-                    fill="#FFB000" 
-                    radius={[0, 4, 4, 0]} 
-                    className="cursor-pointer"
-                    onClick={(entry) => {
-                      setSearchTerm(entry.name);
-                      setActiveTab('personnel');
-                      setFilterType('employees');
-                      setDashboardFilter(null);
-                    }}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-              <p className="text-[10px] text-[#8E8E93] mt-2 text-center uppercase tracking-widest">نمایش ۸ سمت برتر سازمانی</p>
+        <Card title="تفکیک سمت‌های سازمانی">
+          <div className="flex flex-col h-full">
+            <div className="mb-4">
+              <select 
+                value={posUnitFilter}
+                onChange={(e) => setPosUnitFilter(e.target.value)}
+                className="w-full bg-[#1C1C1E] border border-[#2C2C2E] rounded p-2 text-[11px] text-[#E0E0E0] outline-none focus:border-[#FFB000]"
+              >
+                <option value="همه واحدها">همه واحدها</option>
+                {stats.unitDistribution.map(u => (
+                  <option key={u.name} value={u.name}>{u.name}</option>
+                ))}
+              </select>
             </div>
-            <div className="space-y-3">
-              <h4 className="text-[10px] font-bold text-[#FFB000] uppercase tracking-widest mb-2 flex items-center gap-2">
-                <Activity size={14} /> پایش سلامت
-              </h4>
-              {stats.healthStats.length > 0 ? (
-                <div className="space-y-2">
-                  {stats.healthStats.slice(0, 5).map((item: any, idx: number) => (
-                    <button key={idx} onClick={() => { setSearchTerm(item.name); setActiveTab('personnel'); setFilterType('all'); }} className="w-full flex items-center justify-between p-2 bg-neutral-900/50 border border-[#2C2C2E] rounded hover:border-[#FFB000]/30 transition-colors group text-right">
-                      <span className="text-[10px] font-medium text-[#E0E0E0] group-hover:text-[#FFB000]">{item.name}</span>
-                      <span className="text-[10px] text-[#8E8E93] font-mono">{item.count}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="h-[100px] flex items-center justify-center text-[#8E8E93] text-[10px] italic">اطلاعاتی یافت نشد</div>
-              )}
+            
+            <div className="flex-1 overflow-y-auto max-h-[350px] scrollbar-hide">
+              <table className="w-full text-right">
+                <thead className="sticky top-0 bg-[#151517] border-b border-[#2C2C2E]">
+                  <tr>
+                    <th className="py-2 text-[10px] text-[#8E8E93] font-medium">عنوان سمت</th>
+                    <th className="py-2 text-[10px] text-[#8E8E93] font-medium text-left">تعداد</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#2C2C2E]/30">
+                  {([...data]
+                    .filter(p => isEmployee(p))
+                    .filter(p => posUnitFilter === 'همه واحدها' || p.unit === posUnitFilter)
+                    .reduce((acc: any[], curr) => {
+                      let pos = curr.position || 'نامشخص';
+                      if ((pos === 'نامشخص' || !pos) && curr.jobTitleKerman && curr.workshopPosition && curr.jobTitleKerman === curr.workshopPosition) {
+                        pos = curr.jobTitleKerman;
+                      }
+                      const existing = acc.find(a => a.name === pos);
+                      if (existing) existing.value++;
+                      else acc.push({ name: pos, value: 1 });
+                      return acc;
+                    }, [])
+                    .sort((a, b) => b.value - a.value)
+                    .map((item, idx) => (
+                      <tr 
+                        key={idx} 
+                        className="group hover:bg-[#FFB000]/5 transition-colors cursor-pointer"
+                        onClick={() => {
+                          setDashboardFilter({ key: 'position', value: item.name, unit: posUnitFilter !== 'همه واحدها' ? posUnitFilter : null });
+                          setActiveTab('personnel');
+                          setFilterType('employees');
+                          setSearchTerm('');
+                        }}
+                      >
+                        <td className="py-3 text-[11px] text-[#E0E0E0] group-hover:text-[#FFB000]">{item.name}</td>
+                        <td className="py-3 text-[11px] text-[#8E8E93] font-mono text-left">{item.value}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
+            <p className="text-[9px] text-[#8E8E93] mt-3 text-center opacity-50 italic">برای فیلتر روی هر سمت کلیک کنید</p>
           </div>
         </Card>
       </div>
-
-      <Card title="پراکندگی جنسیتی کارکنان">
-        <div className="h-[250px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie data={stats.genderStats} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
-                {stats.genderStats.map((_: any, index: number) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
-              <Legend verticalAlign="bottom" height={36}/>
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
     </div>
   );
 }
@@ -1240,7 +1472,14 @@ function PersonnelList({
             <span className="text-[10px] text-[#8E8E93] font-bold uppercase tracking-wider">فیلتر هوشمند فعال:</span>
             <div className="flex items-center gap-2 px-3 py-1 bg-[#FFB000]/10 border border-[#FFB000]/30 rounded-full group">
               <span className="text-[10px] font-bold text-[#FFB000]">
-                {dashboardFilter.key === 'unit' ? 'واحد' : dashboardFilter.key === 'gender' ? 'جنسیت' : dashboardFilter.key === 'ageRange' ? 'بازه سنی' : dashboardFilter.key === 'experienceRange' ? 'سطح سابقه' : ''}: {dashboardFilter.value}
+                {dashboardFilter.key === 'mismatch' ? 'مغایرت سمت' : (
+                  (dashboardFilter.key === 'unit' ? 'واحد' : 
+                   dashboardFilter.key === 'gender' ? 'جنسیت' : 
+                   dashboardFilter.key === 'ageRange' ? 'بازه سنی' : 
+                   dashboardFilter.key === 'experienceRange' ? 'سطح سابقه' : 
+                   dashboardFilter.key === 'position' ? 'سمت سازمانی' : '') + 
+                  (dashboardFilter.value ? `: ${dashboardFilter.value}` : '')
+                )}
               </span>
               <button onClick={() => setDashboardFilter(null)} className="p-0.5 hover:bg-[#FFB000]/20 rounded-full transition-colors"><X size={12} className="text-[#FFB000]" /></button>
             </div>
@@ -1266,8 +1505,15 @@ function PersonnelList({
                   <tr key={`${person.id}-${idx}`} className="hover:bg-[#1C1C1E] transition-colors cursor-pointer group !border-b !border-[#2C2C2E]/30 last:border-0" onClick={() => setSelectedPerson(person)}>
                     <td className="px-6 py-4 text-sm font-mono text-[#8E8E93]">{person.id || idx}</td>
                     <td className="px-6 py-4">
-                      <div className="text-sm font-bold text-[#FFFFFF] group-hover:text-[#FFB000] transition-colors">{person.firstName || ''} {person.lastName || ''}</div>
-                      <div className="text-[10px] text-[#8E8E93] font-mono">{person.nationalId || ''}</div>
+                      <div className="flex flex-col">
+                        <div className="text-sm font-bold text-[#FFFFFF] group-hover:text-[#FFB000] transition-colors flex items-center gap-2">
+                          {person.firstName || ''} {person.lastName || ''}
+                          {(!!person.jobTitleKerman && !!person.workshopPosition && person.jobTitleKerman !== person.workshopPosition) && (
+                            <AlertTriangle size={12} className="text-[#EF4444]" title="مغایرت سمت" />
+                          )}
+                        </div>
+                        <div className="text-[10px] text-[#8E8E93] font-mono">{person.nationalId || ''}</div>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className={cn("px-2 py-0.5 rounded text-[9px] font-bold uppercase", (person.relationCode === '1' || !person.relation || person.relation === 'خودش') ? "bg-[#FFB000]/10 text-[#FFB000] border border-[#FFB000]/30" : "bg-[#8E8E93]/10 text-[#8E8E93] border border-[#8E8E93]/30")}>
@@ -1276,7 +1522,20 @@ function PersonnelList({
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-sm text-[#E0E0E0]">{person.unit || '-'}</div>
-                      <div className="text-[10px] text-[#8E8E93]">{person.position || '-'}</div>
+                      <div className="text-[10px] text-[#8E8E93]">
+                        {(() => {
+                          const pos = person.position || 'نامشخص';
+                          if ((pos === 'نامشخص' || !pos) && person.jobTitleKerman && person.workshopPosition && person.jobTitleKerman === person.workshopPosition) {
+                            return (
+                              <span className="text-[#FFB000] flex items-center gap-1">
+                                <Lightbulb size={10} />
+                                {person.jobTitleKerman} (تشخیص خودکار)
+                              </span>
+                            );
+                          }
+                          return pos;
+                        })()}
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-sm text-[#E0E0E0] tabular-nums">{(person.age || 0) > 0 ? `${person.age} سال` : ((person.experienceYears || 0) > 0 ? `${person.experienceYears} سال سابقه` : '-')}</div>
@@ -1380,11 +1639,14 @@ function ManagementReports({ stats, data, reportConfig, setReportConfig, setSear
   );
 }
 
-function DetailItem({ label, value }: { label: string, value: string | number }) {
+function DetailItem({ label, value, isWarning }: { label: string, value: string | number, isWarning?: boolean }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] text-[#8E8E93] font-medium uppercase tracking-wider">{label}</span>
-      <span className="text-sm text-[#E0E0E0] font-bold">{String(value) || '-'}</span>
+      <span className={cn(
+        "text-sm font-bold",
+        isWarning ? "text-[#FF453A]" : "text-[#E0E0E0]"
+      )}>{String(value) || '-'}</span>
     </div>
   );
 }
@@ -1413,6 +1675,24 @@ function Card({
   );
 }
 
+function SmallStatCard({ title, value, icon: Icon, onClick }: { title: string, value: number, icon: any, onClick?: () => void }) {
+  return (
+    <div 
+      onClick={onClick}
+      className={cn(
+        "bg-[#151517] p-3 rounded-lg border border-[#2C2C2E] flex items-center justify-between group hover:border-[#FFB000]/30 transition-all",
+        onClick && "cursor-pointer"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <Icon size={14} className="text-[#FFB000]" />
+        <span className="text-[11px] font-bold text-[#8E8E93] group-hover:text-[#E0E0E0] transition-colors">{title}</span>
+      </div>
+      <span className="text-sm font-bold text-[#FFFFFF] tabular-nums">{value}</span>
+    </div>
+  );
+}
+
 function StatCard({ 
   title, 
   value, 
@@ -1424,13 +1704,14 @@ function StatCard({
   value: string | number; 
   icon: any; 
   subtitle?: string;
-  color?: "brand" | "muted"
+  color?: "brand" | "muted" | "warning"
 }) {
+  const colorClass = color === 'brand' ? 'text-[#FFB000]' : (color === 'warning' ? 'text-[#FF453A]' : 'text-[#8E8E93]');
   return (
     <div className="bg-[#151517] p-5 rounded-lg shadow-sm border border-[#2C2C2E] flex flex-col justify-between group hover:border-[#FFB000]/30 transition-all h-full min-h-[120px]">
       <div className="flex justify-between items-start mb-4">
         <h3 className="text-[#8E8E93] text-[10px] font-bold uppercase tracking-widest">{title}</h3>
-        <Icon size={18} className={color === 'brand' ? 'text-[#FFB000]' : 'text-[#8E8E93]'} />
+        <Icon size={18} className={colorClass} />
       </div>
       <div className="flex items-baseline gap-2">
         <span className="text-4xl font-serif-header font-bold text-[#FFFFFF] tabular-nums">

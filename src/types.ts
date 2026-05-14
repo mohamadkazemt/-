@@ -24,7 +24,10 @@ export interface PersonnelData {
   workGroup: string; // گروه کاری
   unit: string; // واحد
   position: string; // سمت
+  jobTitleKerman?: string;
+  workshopPosition?: string;
   miningExpDays: number; // سابقه کار معدنی (روز)
+  hireDate: string; // تاریخ استخدام
 }
 
 export interface PersonnelStats {
@@ -43,7 +46,15 @@ export interface PersonnelStats {
   healthStats: { name: string; count: number }[];
   familyStats: {
     avgDependents: number;
+    breakdown: {
+      children: number;
+      spouse: number;
+      mother: number;
+      father: number;
+      other: number;
+    };
   };
   avgAge: number;
   avgExperienceByUnit: { name: string; value: number }[];
+  mismatch: number;
 }

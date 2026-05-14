@@ -34,7 +34,12 @@ export const apiService = {
         const response = await fetch('/api/personnel', {
             headers: getAuthHeader()
         });
-        if (!response.ok) throw new Error('Failed to fetch personnel');
+        if (!response.ok) {
+            if (response.status === 401) throw new Error('Unauthorized');
+            if (response.status === 403) throw new Error('Forbidden');
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.message || err.error || 'Failed to fetch personnel');
+        }
         const data = await response.json();
         // Map db_id to firestoreId (to keep frontend naming consistent for now)
         return data.map((item: any) => ({
@@ -52,6 +57,9 @@ export const apiService = {
             experienceYears: item.experience_years,
             workGroup: item.work_group,
             miningExpDays: item.mining_exp_days,
+            hireDate: item.hire_date,
+            jobTitleKerman: item.job_title_kerman,
+            workshopPosition: item.workshop_position,
             firestoreId: item.db_id.toString()
         }));
     },
@@ -62,7 +70,10 @@ export const apiService = {
             headers: getAuthHeader(),
             body: JSON.stringify(person)
         });
-        if (!response.ok) throw new Error('Failed to add personnel');
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            throw new Error(err.message || err.error || 'Failed to add personnel');
+        }
     },
 
     async updatePerson(dbId: string, person: Partial<PersonnelData>): Promise<void> {
@@ -87,7 +98,10 @@ export const apiService = {
             workGroup: person.workGroup,
             unit: person.unit,
             position: person.position,
-            miningExpDays: person.miningExpDays
+            jobTitleKerman: person.jobTitleKerman,
+            workshopPosition: person.workshopPosition,
+            miningExpDays: person.miningExpDays,
+            hireDate: person.hireDate
         };
 
         const response = await fetch(`/api/personnel/${dbId}`, {
