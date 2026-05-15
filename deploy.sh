@@ -23,6 +23,8 @@ else
 fi
 
 # 3. Install Dependencies
+echo "📥 Setting up ArvanCloud NPM Mirror..."
+npm config set registry https://npm.arvancloud.ir
 echo "📥 Installing project dependencies..."
 npm install
 

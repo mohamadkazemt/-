@@ -181,10 +181,11 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
       healthStats: [],
       familyStats: { 
         avgDependents: 0,
-        breakdown: { children: 0, spouse: 0, mother: 0, father: 0, other: 0 }
+        breakdown: { children: 0, childrenOver18: 0, spouse: 0, mother: 0, father: 0, other: 0 }
       },
       avgAge: 0,
       avgExperienceByUnit: [],
+      workGroupStats: [],
       mismatch: 0,
     };
   }
@@ -194,6 +195,13 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
   
   const totalEmployees = employees.length;
   const totalDependents = dependents.length;
+
+  // Working Group Distribution
+  const workGroups: Record<string, number> = {};
+  employees.forEach(p => {
+    const wg = p.workGroup || 'سایر';
+    workGroups[wg] = (workGroups[wg] || 0) + 1;
+  });
 
   // Use only employees for main demographics
   const genderStatsMap: Record<string, number> = {};
@@ -276,6 +284,7 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
   
   const dependentBreakdown = {
     children: 0,
+    childrenOver18: 0,
     spouse: 0,
     mother: 0,
     father: 0,
@@ -286,6 +295,9 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
     const rel = (d.relation || '').trim();
     if (rel.includes('فرزند') || rel.includes('پسر') || rel.includes('دختر')) {
       dependentBreakdown.children++;
+      if (d.age >= 18) {
+        dependentBreakdown.childrenOver18++;
+      }
     } else if (rel.includes('همسر')) {
       dependentBreakdown.spouse++;
     } else if (rel.includes('مادر')) {
@@ -324,6 +336,7 @@ export const calculateStats = (data: PersonnelData[]): PersonnelStats => {
     },
     avgAge,
     avgExperienceByUnit,
+    workGroupStats: Object.entries(workGroups).map(([name, value]) => ({ name, value })),
     mismatch,
   };
 };

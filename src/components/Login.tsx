@@ -48,10 +48,10 @@ export const Login: React.FC<LoginProps> = ({ onSuccess }) => {
             <div className="relative">
               <User className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8E8E93]" size={20} />
               <input
-                type="email"
+                type="text"
                 required
                 className="w-full bg-[#0A0A0B] border border-[#2C2C2E] rounded-lg py-3 pr-10 pl-4 text-white focus:outline-none focus:ring-1 focus:ring-[#FFB000] transition-all placeholder:text-[#3A3A3C]"
-                placeholder="ایمیل (نام کاربری)"
+                placeholder="نام کاربری"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />

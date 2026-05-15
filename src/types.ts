@@ -48,6 +48,7 @@ export interface PersonnelStats {
     avgDependents: number;
     breakdown: {
       children: number;
+      childrenOver18: number;
       spouse: number;
       mother: number;
       father: number;
@@ -56,5 +57,6 @@ export interface PersonnelStats {
   };
   avgAge: number;
   avgExperienceByUnit: { name: string; value: number }[];
+  workGroupStats: { name: string; value: number }[];
   mismatch: number;
 }

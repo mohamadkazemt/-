@@ -42,6 +42,8 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import moment from 'jalali-moment';
+import ExcelJS from 'exceljs';
+import { saveAs } from 'file-saver';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { apiService } from './services/apiService';
@@ -53,10 +55,14 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const normalizePersian = (str: string) => {
-  if (!str) return '';
-  return str
+const normalizePersian = (str: any) => {
+  if (str === null || str === undefined) return '';
+  const s = String(str);
+  return s
     .trim()
+    .toLowerCase()
+    .replace(/[۰-۹]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 1728))
+    .replace(/[٠-٩]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 1584))
     .replace(/ی/g, 'ی') // Standard Farsi Ye
     .replace(/ي/g, 'ی') // Arabic Ye to Farsi
     .replace(/ک/g, 'ک') // Standard Farsi Ke
@@ -131,7 +137,7 @@ export default function App() {
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState<PersonnelData | null>(null);
   const [dashboardFilter, setDashboardFilter] = useState<any>(null);
-  const [reportConfig, setReportConfig] = useState<{ type: 'unit' | 'position', value: string }>({ type: 'unit', value: '' });
+  const [reportConfig, setReportConfig] = useState<{ type: 'unit' | 'position' | 'workGroup', value: string }>({ type: 'unit', value: '' });
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -280,32 +286,50 @@ export default function App() {
 
   const filteredPersonnel = useMemo(() => {
     if (!data || !Array.isArray(data)) return [];
+    
+    // Process search terms for multi-criteria search
+    const sTermNormalized = normalizePersian(searchTerm || '');
+    const searchTerms = sTermNormalized.split(' ').filter(t => t.length > 0);
+
     return data.filter(p => {
       if (!p) return false;
-      const fName = normalizePersian(p.firstName || '');
-      const lName = normalizePersian(p.lastName || '');
-      const pId = normalizePersian(p.id || '');
-      const relation = normalizePersian(p.relation || '');
 
-      const getInferredPosition = (p: PersonnelData) => {
-        let pos = p.position || 'نامشخص';
-        if ((pos === 'نامشخص' || !pos) && p.jobTitleKerman && p.workshopPosition && p.jobTitleKerman === p.workshopPosition) {
-          return p.jobTitleKerman;
-        }
-        return pos;
-      };
+      // multi-criteria space-separated search
+      const matchesSearch = searchTerms.every(term => {
+        const getInferredPosition = (person: PersonnelData) => {
+          let pos = person.position || 'نامشخص';
+          if ((pos === 'نامشخص' || !pos) && person.jobTitleKerman && person.workshopPosition && person.jobTitleKerman === person.workshopPosition) {
+            return person.jobTitleKerman;
+          }
+          return pos;
+        };
 
-      const pPos = normalizePersian(getInferredPosition(p));
-      const pUnit = normalizePersian(p.unit || '');
-      const sTerm = normalizePersian(searchTerm || '');
+        const searchableFields = [
+          p.firstName,
+          p.lastName,
+          p.id,
+          p.unit,
+          getInferredPosition(p),
+          p.workGroup,
+          p.relation,
+          p.experienceYears?.toString(),
+          p.age?.toString()
+        ].map(f => normalizePersian(f || ''));
 
-      const matchesSearch = 
-        fName.includes(sTerm) || 
-        lName.includes(sTerm) || 
-        pId.includes(sTerm) ||
-        pPos.includes(sTerm) ||
-        pUnit.includes(sTerm) ||
-        (filterType === 'dependents' && relation.includes(sTerm));
+        // Add contextual labels for searching
+        const exp = p.experienceYears || 0;
+        if (exp < 5) searchableFields.push('کم', 'زیر ۵');
+        else if (exp < 15) searchableFields.push('متوسط', '۵ تا ۱۵');
+        else searchableFields.push('زیاد', 'بالای ۱۵');
+
+        const age = p.age || 0;
+        if (age < 30) searchableFields.push('زیر ۳۰');
+        else if (age < 40) searchableFields.push('۳۰ تا ۴۰');
+        else if (age < 50) searchableFields.push('۴۰ تا ۵۰');
+        else searchableFields.push('۵۰ به بالا');
+
+        return searchableFields.some(field => field.includes(term));
+      });
       
       if (!matchesSearch) return false;
 
@@ -319,6 +343,13 @@ export default function App() {
 
       if (dashboardFilter) {
         if (typeof dashboardFilter === 'object') {
+          if (dashboardFilter.key === 'childrenOver18') {
+            if (filterType !== 'dependents') return false;
+            const rel = normalizePersian(p.relation || '');
+            if (!(rel.includes('فرزند') || rel.includes('پسر') || rel.includes('دختر'))) return false;
+            if ((p.age || 0) < 18) return false;
+            return true;
+          }
           if (dashboardFilter.key === 'mismatch') {
             const titleK = (p.jobTitleKerman || '').trim();
             const titleW = (p.workshopPosition || '').trim();
@@ -350,8 +381,8 @@ export default function App() {
               if (currentUnit !== dashboardFilter.unit) return false;
             }
           }
+          if (dashboardFilter.key === 'workGroup' && p.workGroup !== dashboardFilter.value) return false;
         } else if (dashboardFilter === 'mismatch') {
-          // Fallback for old string type
           const titleK = (p.jobTitleKerman || '').trim();
           const titleW = (p.workshopPosition || '').trim();
           return !!titleK && !!titleW && titleK !== titleW;
@@ -408,7 +439,7 @@ export default function App() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart 
                 layout="vertical" 
-                data={stats.unitDistribution.sort((a, b) => b.value - a.value)}
+                data={[...stats.unitDistribution].sort((a, b) => b.value - a.value)}
                 margin={{ left: 20, right: 40 }}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#2C2C2E" />
@@ -509,7 +540,7 @@ export default function App() {
         <Card title="توزیع سمت‌های سازمانی">
           <div className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart layout="vertical" data={stats.positionDistribution.sort((a, b) => b.value - a.value).slice(0, 8)}>
+              <BarChart layout="vertical" data={[...stats.positionDistribution].sort((a, b) => b.value - a.value).slice(0, 8)}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#2C2C2E" />
                 <XAxis type="number" hide />
                 <YAxis dataKey="name" type="category" width={120} axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
@@ -638,7 +669,7 @@ export default function App() {
                 className="w-full bg-[#1C1C1E] border border-[#2C2C2E] text-[#E0E0E0] p-2.5 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#FFB000]"
               >
                 <option value="">همه موارد</option>
-                {(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution)
+                {[...(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution)]
                   .sort((a, b) => b.value - a.value)
                   .map(item => (
                     <option key={item.name} value={item.name}>{item.name} ({item.value} نفر)</option>
@@ -707,7 +738,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2C2C2E]">
-                  {(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution)
+                  {[...(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution)]
                     .sort((a, b) => b.value - a.value)
                     .slice(0, 10)
                     .map((item) => (
@@ -747,7 +778,7 @@ export default function App() {
               <p className="text-sm text-[#E0E0E0]">
                 بر اساس تحلیل داده‌ها، واحد 
                 <span className="font-bold mx-1 text-[#FFB000]">
-                  {stats.unitDistribution.sort((a, b) => b.value - a.value)[0]?.name}
+                  {[...stats.unitDistribution].sort((a, b) => b.value - a.value)[0]?.name}
                 </span>
                 دارای بیشترین تعداد نیروی انسانی است. پیشنهاد می‌شود فرآیندهای بهینه‌سازی در این واحد بررسی گردند.
               </p>
@@ -1236,12 +1267,23 @@ function StatsDashboard({ stats, data, setDashboardFilter, setActiveTab, setFilt
         </button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-8">
         <SmallStatCard 
-          title="فرزند" 
+          title="فرزند (کل)" 
           value={stats.familyStats.breakdown.children} 
           icon={UsersList} 
           onClick={() => { setSearchTerm('فرزند'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
+        />
+        <SmallStatCard 
+          title="فرزند بالای ۱۸" 
+          value={stats.familyStats.breakdown.childrenOver18} 
+          icon={UsersList} 
+          onClick={() => { 
+            setDashboardFilter({ key: 'childrenOver18' }); 
+            setActiveTab('personnel'); 
+            setFilterType('dependents'); 
+            setSearchTerm(''); 
+          }}
         />
         <SmallStatCard 
           title="همسر" 
@@ -1262,7 +1304,7 @@ function StatsDashboard({ stats, data, setDashboardFilter, setActiveTab, setFilt
           onClick={() => { setSearchTerm('پدر'); setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
         />
         <SmallStatCard 
-          title="سایر نسبت‌ها" 
+          title="سایر" 
           value={stats.familyStats.breakdown.other} 
           icon={Activity} 
           onClick={() => { setActiveTab('personnel'); setFilterType('dependents'); setDashboardFilter(null); }}
@@ -1416,6 +1458,31 @@ function StatsDashboard({ stats, data, setDashboardFilter, setActiveTab, setFilt
             <p className="text-[9px] text-[#8E8E93] mt-3 text-center opacity-50 italic">برای فیلتر روی هر سمت کلیک کنید</p>
           </div>
         </Card>
+
+        <Card title="توزیع گروه‌های کاری">
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={[...stats.workGroupStats].sort((a: any, b: any) => b.value - a.value)}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#2C2C2E" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#8E8E93', fontSize: 10 }} />
+                <Tooltip cursor={{ fill: '#1C1C1E' }} contentStyle={{ backgroundColor: '#1C1C1E', borderColor: '#2C2C2E' }} />
+                <Bar 
+                  dataKey="value" 
+                  fill="#FFB000" 
+                  radius={[4, 4, 0, 0]} 
+                  className="cursor-pointer"
+                  onClick={(entry) => {
+                    setDashboardFilter({ key: 'workGroup', value: entry.name });
+                    setActiveTab('personnel');
+                    setFilterType('employees');
+                    setSearchTerm('');
+                  }}
+                />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
       </div>
     </div>
   );
@@ -1439,6 +1506,132 @@ function EditField({ label, value, onChange, placeholder }: { label: string, val
 function PersonnelList({ 
   filteredPersonnel, searchTerm, setSearchTerm, filterType, setFilterType, dashboardFilter, setDashboardFilter, setSelectedPerson, addNewPerson 
 }: any) {
+  const handleExportExcel = async () => {
+    if (!filteredPersonnel || filteredPersonnel.length === 0) return;
+    
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('پرسنل', {
+      views: [{ rightToLeft: true }]
+    });
+
+    // Define columns
+    worksheet.columns = [
+      { header: 'نام', key: 'firstName', width: 15 },
+      { header: 'نام خانوادگی', key: 'lastName', width: 22 },
+      { header: 'کد ملی', key: 'nationalId', width: 20 },
+      { header: 'کد پرسنلی', key: 'id', width: 15 },
+      { header: 'نوع', key: 'type', width: 12 },
+      { header: 'نسبت', key: 'relation', width: 15 },
+      { header: 'وضعیت', key: 'status', width: 12 },
+      { header: 'جنسیت', key: 'gender', width: 10 },
+      { header: 'تاریخ تولد', key: 'birthDate', width: 15 },
+      { header: 'سن', key: 'age', width: 8 },
+      { header: 'نام پدر', key: 'fatherName', width: 15 },
+      { header: 'شماره شناسنامه', key: 'idNumber', width: 15 },
+      { header: 'تعداد تحت تکفل', key: 'dependentsCount', width: 15 },
+      { header: 'شماره تماس', key: 'phoneNumber', width: 15 },
+      { header: 'نوع بیماری', key: 'diseaseType', width: 15 },
+      { header: 'سابقه (سال)', key: 'experienceYears', width: 12 },
+      { header: 'سابقه معدنی (روز)', key: 'miningExpDays', width: 15 },
+      { header: 'گروه کاری', key: 'workGroup', width: 20 },
+      { header: 'واحد', key: 'unit', width: 25 },
+      { header: 'سمت', key: 'position', width: 25 },
+      { header: 'عنوان شغلی کرمان', key: 'jobTitleKerman', width: 25 },
+      { header: 'سمت کارگاهی', key: 'workshopPosition', width: 25 },
+      { header: 'تاریخ استخدام', key: 'hireDate', width: 15 },
+    ];
+
+    // Add rows
+    filteredPersonnel.forEach((p: any) => {
+      worksheet.addRow({
+        firstName: p.firstName || '',
+        lastName: p.lastName || '',
+        nationalId: p.nationalId || '',
+        id: p.id || '',
+        type: isEmployee(p) ? 'کارمند' : 'تحت تکفل',
+        relation: p.relation || 'خودش',
+        status: p.status || '',
+        gender: p.gender || '',
+        birthDate: p.birthDate || '',
+        age: p.age || '',
+        fatherName: p.fatherName || '',
+        idNumber: p.idNumber || '',
+        dependentsCount: p.dependentsCount || 0,
+        phoneNumber: p.phoneNumber || '',
+        diseaseType: p.diseaseType || '',
+        experienceYears: p.experienceYears || 0,
+        miningExpDays: p.miningExpDays || 0,
+        workGroup: p.workGroup || '',
+        unit: p.unit || '',
+        position: p.position || '',
+        jobTitleKerman: p.jobTitleKerman || '',
+        workshopPosition: p.workshopPosition || '',
+        hireDate: p.hireDate || ''
+      });
+    });
+
+    // Style Header Row
+    const headerRow = worksheet.getRow(1);
+    headerRow.height = 35;
+    headerRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFB000' }, // Gold color from theme
+      };
+      cell.font = {
+        bold: true,
+        color: { argb: '000000' },
+        size: 11,
+        name: 'Tahoma'
+      };
+      cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      cell.border = {
+        top: { style: 'thin' },
+        left: { style: 'thin' },
+        bottom: { style: 'medium' },
+        right: { style: 'thin' },
+      };
+    });
+
+    // Style Content Rows
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        row.height = 25;
+        row.eachCell((cell) => {
+          cell.alignment = { vertical: 'middle', horizontal: 'center' };
+          cell.font = { size: 10, name: 'Tahoma' };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'E0E0E0' } },
+            left: { style: 'thin', color: { argb: 'E0E0E0' } },
+            bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
+            right: { style: 'thin', color: { argb: 'E0E0E0' } },
+          };
+          
+          // Alternate Row Styling
+          if (rowNumber % 2 === 0) {
+            cell.fill = {
+              type: 'pattern',
+              pattern: 'solid',
+              fgColor: { argb: 'F9F9F9' },
+            };
+          }
+        });
+      }
+    });
+
+    // Auto-filter
+    worksheet.autoFilter = {
+      from: 'A1',
+      to: 'W1',
+    };
+
+    // Generate and Save
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    saveAs(blob, `گزارش_پرسنل_${moment().format('jYYYY-jMM-jDD')}.xlsx`);
+  };
+
   return (
     <Card title="فهرست پرسنل">
       <div className="space-y-4">
@@ -1447,7 +1640,7 @@ function PersonnelList({
             <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-[#8E8E93]" size={20} />
             <input 
               type="text" 
-              placeholder="جستجو در نام، کد پرسنلی، سمت یا واحد..."
+              placeholder="جستجو (نام، واحد، سمت، سابقه، بازه سنی و...)"
               className="w-full bg-[#1C1C1E] border border-[#2C2C2E] rounded-lg py-3 pr-12 pl-4 focus:ring-1 focus:ring-[#FFB000] outline-none transition-all placeholder:text-[#8E8E93] text-[#E0E0E0]"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
@@ -1458,13 +1651,24 @@ function PersonnelList({
             <button onClick={() => { setFilterType('dependents'); setDashboardFilter(null); }} className={cn("px-4 py-2 rounded text-[10px] font-bold uppercase transition-all", (filterType === 'dependents' && !dashboardFilter) ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>تحت تکفل</button>
             <button onClick={() => { setFilterType('all'); setDashboardFilter(null); }} className={cn("px-4 py-2 rounded text-[10px] font-bold uppercase transition-all", (filterType === 'all' && !dashboardFilter) ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>همه موارد</button>
           </div>
-          <button 
-                onClick={addNewPerson}
-                className="flex items-center gap-2 bg-[#FFB000] text-[#0A0A0B] px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#FFC040] transition-colors"
-          >
-            <Plus size={16} />
-            افزودن فرد جدید
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={handleExportExcel}
+              disabled={!filteredPersonnel || filteredPersonnel.length === 0}
+              className="flex items-center gap-2 bg-[#2C2C2E] text-[#E0E0E0] px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#3A3A3C] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="خروجی اکسل"
+            >
+              <Download size={16} />
+              خروجی اکسل
+            </button>
+            <button 
+                  onClick={addNewPerson}
+                  className="flex items-center gap-2 bg-[#FFB000] text-[#0A0A0B] px-4 py-2 rounded-lg font-bold text-xs hover:bg-[#FFC040] transition-colors"
+            >
+              <Plus size={16} />
+              افزودن فرد جدید
+            </button>
+          </div>
         </div>
 
         {dashboardFilter && (
@@ -1477,7 +1681,9 @@ function PersonnelList({
                    dashboardFilter.key === 'gender' ? 'جنسیت' : 
                    dashboardFilter.key === 'ageRange' ? 'بازه سنی' : 
                    dashboardFilter.key === 'experienceRange' ? 'سطح سابقه' : 
-                   dashboardFilter.key === 'position' ? 'سمت سازمانی' : '') + 
+                   dashboardFilter.key === 'position' ? 'سمت سازمانی' :
+                   dashboardFilter.key === 'workGroup' ? 'گروه کاری' :
+                   dashboardFilter.key === 'childrenOver18' ? 'فرزندان بالای ۱۸ سال' : '') + 
                   (dashboardFilter.value ? `: ${dashboardFilter.value}` : '')
                 )}
               </span>
@@ -1564,7 +1770,9 @@ function ManagementReports({ stats, data, reportConfig, setReportConfig, setSear
   const filteredData = Array.isArray(data) ? data.filter((p: any) => {
     if (!isEmployee(p)) return false;
     if (reportConfig.value) {
-      return reportConfig.type === 'unit' ? p.unit === reportConfig.value : p.position === reportConfig.value;
+      if (reportConfig.type === 'unit') return p.unit === reportConfig.value;
+      if (reportConfig.type === 'position') return p.position === reportConfig.value;
+      if (reportConfig.type === 'workGroup') return p.workGroup === reportConfig.value;
     }
     return true;
   }) : [];
@@ -1581,15 +1789,16 @@ function ManagementReports({ stats, data, reportConfig, setReportConfig, setSear
             <div className="flex-1 space-y-2">
               <label className="text-[10px] text-[#8E8E93] font-bold uppercase tracking-wider">مبنا</label>
               <div className="flex bg-[#1C1C1E] p-1 rounded-lg border border-[#2C2C2E]">
-                <button onClick={() => setReportConfig({ ...reportConfig, type: 'unit', value: '' })} className={cn("flex-1 py-2 rounded text-xs font-bold transition-all", reportConfig.type === 'unit' ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>واحد</button>
-                <button onClick={() => setReportConfig({ ...reportConfig, type: 'position', value: '' })} className={cn("flex-1 py-2 rounded text-xs font-bold transition-all", reportConfig.type === 'position' ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>سمت</button>
+                <button onClick={() => setReportConfig({ ...reportConfig, type: 'unit', value: '' })} className={cn("flex-1 py-1 rounded text-[10px] font-bold transition-all", reportConfig.type === 'unit' ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>واحد</button>
+                <button onClick={() => setReportConfig({ ...reportConfig, type: 'position', value: '' })} className={cn("flex-1 py-1 rounded text-[10px] font-bold transition-all", reportConfig.type === 'position' ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>سمت</button>
+                <button onClick={() => setReportConfig({ ...reportConfig, type: 'workGroup', value: '' })} className={cn("flex-1 py-1 rounded text-[10px] font-bold transition-all", reportConfig.type === 'workGroup' ? "bg-[#FFB000] text-[#0A0A0B]" : "text-[#8E8E93]")}>گروه کاری</button>
               </div>
             </div>
             <div className="flex-1 space-y-2">
-              <label className="text-[10px] text-[#8E8E93] font-bold uppercase tracking-wider">انتخاب {reportConfig.type === 'unit' ? 'واحد' : 'سمت'}</label>
+              <label className="text-[10px] text-[#8E8E93] font-bold uppercase tracking-wider">انتخاب {reportConfig.type === 'unit' ? 'واحد' : reportConfig.type === 'position' ? 'سمت' : 'گروه کاری'}</label>
               <select value={reportConfig.value} onChange={(e) => setReportConfig({ ...reportConfig, value: e.target.value })} className="w-full bg-[#1C1C1E] border border-[#2C2C2E] text-[#E0E0E0] p-2.5 rounded-lg text-sm outline-none focus:ring-1 focus:ring-[#FFB000]">
                 <option value="">همه</option>
-                {(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution).sort((a: any, b: any) => b.value - a.value).map((item: any) => (
+                {[...(reportConfig.type === 'unit' ? stats.unitDistribution : (reportConfig.type === 'position' ? stats.positionDistribution : stats.workGroupStats))].sort((a: any, b: any) => b.value - a.value).map((item: any) => (
                   <option key={item.name} value={item.name}>{item.name} ({item.value})</option>
                 ))}
               </select>
@@ -1613,7 +1822,7 @@ function ManagementReports({ stats, data, reportConfig, setReportConfig, setSear
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2C2C2E]">
-                  {(reportConfig.type === 'unit' ? stats.unitDistribution : stats.positionDistribution).sort((a: any, b: any) => b.value - a.value).slice(0, 10).map((item: any) => (
+                  {[...(reportConfig.type === 'unit' ? stats.unitDistribution : (reportConfig.type === 'position' ? stats.positionDistribution : stats.workGroupStats))].sort((a: any, b: any) => b.value - a.value).slice(0, 10).map((item: any) => (
                     <tr key={item.name} className="hover:bg-[#1C1C1E] transition-colors">
                       <td className="px-4 py-2 text-xs font-bold text-[#FFFFFF]">{item.name}</td>
                       <td className="px-4 py-2 text-xs text-[#E0E0E0]">{item.value}</td>

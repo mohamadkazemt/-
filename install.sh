@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# Intelligent Personnel Management System - Auto Installer (MySQL Edition)
-# This script installs Node.js, MySQL, Git, PM2, and sets up the application.
+# Intelligent Personnel Management System - Auto Installer (Iranian Server Edition)
+# This script installs Node.js, Nginx, PM2, sets up mirrors, and configures the app.
 # ==============================================================================
 
 # --- Setup Colors ---
@@ -28,26 +28,24 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # 2. Update & Basic Tools
-echo -e "${YELLOW}[1/7] Updating system and installing base tools...${NC}"
-apt update -y && apt install -y curl git build-essential
+echo -e "${YELLOW}[1/7] Updating system and installing base tools (Nginx, Git, etc.)...${NC}"
+apt update -y && apt install -y curl git build-essential nginx
 
-# 3. Install Node.js
+# 3. Setup ArvanCloud Mirrors (NPM)
+echo -e "${YELLOW}[2/7] Setting up ArvanCloud NPM Mirror...${NC}"
+# We'll set this globally after Node is installed, but let's note it for later.
+
+# 4. Install Node.js
 if ! command -v node &> /dev/null; then
-    echo -e "${YELLOW}[2/7] Installing Node.js 20...${NC}"
+    echo -e "${YELLOW}[3/7] Installing Node.js 20...${NC}"
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt install -y nodejs
+    
+    # Configure NPM registry right after installation
+    npm config set registry https://npm.arvancloud.ir
 else
     echo -e "${GREEN}✅ Node.js is already installed ($(node -v))${NC}"
-fi
-
-# 4. Install MySQL Server
-if ! command -v mysql &> /dev/null; then
-    echo -e "${YELLOW}[3/7] Installing MySQL Server...${NC}"
-    apt install -y mysql-server
-    systemctl start mysql
-    systemctl enable mysql
-else
-    echo -e "${GREEN}✅ MySQL is already installed.${NC}"
+    npm config set registry https://npm.arvancloud.ir
 fi
 
 # 5. Clone / Update Repository
@@ -62,22 +60,14 @@ if [ ! -d "$DEFAULT_INSTALL_DIR" ]; then
 else
     echo -e "${YELLOW}[4/7] Project directory exists. Pulling latest changes...${NC}"
     cd "$DEFAULT_INSTALL_DIR" || exit
-    git pull
+    # Ensure we are in a git repo before pulling
+    if [ -d ".git" ]; then
+        git pull
+    fi
 fi
 
 # 6. Environment & Database Setup
-echo -e "${YELLOW}[5/7] Setting up Environment and Database...${NC}"
-
-# Get Database Details
-echo -e "${GREEN}--- Database Configuration ---${NC}"
-read -p "MySQL Host [localhost]: " db_host
-db_host=${db_host:-localhost}
-read -p "MySQL User [root]: " db_user
-db_user=${db_user:-root}
-read -s -p "MySQL Password: " db_pass
-echo ""
-read -p "MySQL Database Name [personnel_db]: " db_name
-db_name=${db_name:-personnel_db}
+echo -e "${YELLOW}[5/7] Setting up Environment...${NC}"
 
 # Get Admin Details
 echo -e "${GREEN}--- Admin User Configuration ---${NC}"
@@ -89,36 +79,19 @@ echo ""
 # Generate random JWT Secret
 jwt_secret=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32 ; echo '')
 
-# Create .env file
+# Create .env file (Note: SQLite is used, so no DB host/user needed)
 cat <<EOF > .env
-# MySQL Configuration
-MYSQL_HOST=$db_host
-MYSQL_USER=$db_user
-MYSQL_PASSWORD=$db_pass
-MYSQL_DATABASE=$db_name
-MYSQL_PORT=3306
-
 # Authentication
 JWT_SECRET=$jwt_secret
 ADMIN_USER=$admin_email
 ADMIN_PASSWORD=$admin_pass
+NODE_ENV=production
 EOF
 
 echo -e "${GREEN}✅ .env file created successfully.${NC}"
 
-# Attempt to create database and run db.sql
-echo -e "${YELLOW}Attempting to initialize database...${NC}"
-mysql -h"$db_host" -u"$db_user" "-p$db_pass" -e "CREATE DATABASE IF NOT EXISTS $db_name;" 2>/dev/null
-mysql -h"$db_host" -u"$db_user" "-p$db_pass" "$db_name" < db.sql 2>/dev/null
-
-if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Database initialized successfully.${NC}"
-else
-    echo -e "${RED}⚠️  Could not initialize database automatically. Please check your credentials and run db.sql manually.${NC}"
-fi
-
 # 7. Install Dependencies & Build
-echo -e "${YELLOW}[6/7] Installing dependencies and building...${NC}"
+echo -e "${YELLOW}[6/7] Installing dependencies and building (using Arvan Mirror)...${NC}"
 npm install
 npm run build
 
@@ -137,12 +110,46 @@ PORT=3000 pm2 start npm --name "$APP_NAME" -- run start
 
 # Save PM2 state for auto-reboot
 pm2 save
-# Optional: Setup startup script
 pm2 startup | tail -n 1 | bash
+
+# 10. Configure Nginx Reverse Proxy
+echo -e "${YELLOW}Configuring Nginx Reverse Proxy for Iranian Server...${NC}"
+cat <<EOF > /etc/nginx/sites-available/$APP_NAME
+server {
+    listen 80;
+    server_name _;
+
+    # Root directory for static assets if needed, but Express handles it
+    # We proxy everything to Express on port 3000
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        
+        # Increase body size for excel uploads/etc
+        client_max_body_size 50M;
+        
+        # Timeout settings
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+EOF
+
+ln -sf /etc/nginx/sites-available/$APP_NAME /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl restart nginx
 
 echo -e "${YELLOW}------------------------------------------------${NC}"
 echo -e "${GREEN}✅ Installation Complete!${NC}"
-echo -e "📍 Your app is running at: ${YELLOW}http://$(curl -s ifconfig.me):3000${NC}"
-echo -e "📖 IMPORTANT: Ensure you have configured .env and executed db.sql if not done.${NC}"
+echo -e "📍 Your app is running at: ${YELLOW}http://$(curl -s ifconfig.me)${NC}"
+echo -e "📖 Mirrors: NPM registry set to ArvanCloud."
+echo -e "📖 Nginx: Reverse proxy configured on port 80."
+echo -e "📖 Database: SQLite (personnel.db) managed automatically."
 echo -e "📖 Use 'pm2 logs $APP_NAME' to see real-time logs."
 echo -e "${YELLOW}------------------------------------------------${NC}"
