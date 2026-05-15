@@ -1,117 +1,142 @@
 # سامانه مدیریت هوشمند پرسنل | Intelligent Personnel Management System
 
-این پروژه یک سامانه تحت وب برای مدیریت و تحلیل داده‌های پرسنلی بر اساس فایل‌های اکسل است.
-This project is a web-based system for managing and analyzing personnel data based on Excel files.
+این پروژه یک سامانه جامع برای مدیریت، تحلیل و گزارش‌گیری داده‌های پرسنلی بر اساس فایل‌های اکسل است. این نسخه برای پایداری بالا و امنیت در سرورهای لینوکس (مخصوصاً سرورهای داخل ایران) بهینه شده است.
 
 ---
 
-## 🛠️ تنظیمات اولیه سیستم (MySQL)
-
-برای استفاده از دیتابیس MySQL، مراحل زیر را انجام دهید:
-
-1. **ایجاد دیتابیس:**
-   - اسکریپت موجود در فایل `db.sql` را در محیط MySQL خود اجرا کنید تا جداول مورد نیاز ساخته شوند.
-
-2. **تنظیمات محیطی (Environment Variables):**
-   - فایل `.env.example` را به `.env` تغییر نام دهید و مقادیر زیر را تنظیم کنید:
-     - اطلاعات اتصال به MySQL (`MYSQL_HOST`, `MYSQL_USER`, etc.)
-     - رمز عبور مدیر سامانه (`ADMIN_USER`, `ADMIN_PASSWORD`)
-     - یک کلید امنیتی برای JWT (`JWT_SECRET`)
-
-3. **ایجاد کاربر مدیر:**
-   - اولین ورود شما با اطلاعاتی که در فایل `.env` تعریف کرده‌اید انجام خواهد شد. سیستم به صورت خودکار از این اطلاعات برای ورود اولیه استفاده می‌کند.
-
----
-
-## 🚀 شروع سریع | Quick Start (One-Liner)
-
-اگر می‌خواهید همه مراحل نصب (Node.js, Git, PM2) و راه‌اندازی پروژه به صورت خودکار روی سرور اوبونتو انجام شود، دستور زیر را در ترمینال اجرا کنید:
-To install everything automatically on an Ubuntu server, run the following command:
+## 🚀 راهنمای راه‌اندازی سریع (اتوماتیک)
+اگر می‌خواهید تمام مراحل زیر (نصب Node.js، Nginx، تنظیم آینه‌ها، کلون پروژه و اجرا) به صورت خودکار انجام شود، دستور زیر را در ترمینال سرور اوبونتو اجرا کنید:
 
 ```bash
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/mohamadkazemt/-/main/install.sh)"
 ```
-> **نکته:** حتماً قبل از اجرا، آدرس مخزن گیت‌هاب خود را در دستور بالا جایگزین کنید.
-> **Note:** Replace the GitHub URL with your actual repository URL before running.
 
 ---
 
-## 🇮🇷 راهنمای نصب دستی (ubuntu server)
+## 🛠️ راهنمای گام‌به‌گام نصب دستی (Manual Deployment)
 
-### ۱. پیش‌نیازها
-ابتدا باید Node.js و npm را روی سرور خود نصب کنید.
+این راهنما برای سرورهای **Ubuntu 20.04/22.04** تدوین شده است.
+
+### مرحله ۱: آپدیت سیستم و نصب ابزارهای پایه
+ابتدا پکیج‌های سیستم را بروزرسانی کرده و ابزارهای مورد نیاز را نصب کنید:
 
 ```bash
-# آپدیت سیستم
 sudo apt update && sudo apt upgrade -y
-
-# نصب Node.js (نسخه پیشنهادی ۲۰ یا بالاتر)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
+sudo apt install -y curl git build-essential nginx certbot python3-certbot-nginx
 ```
 
-### ۲. نصب پروژه
-فایل‌های پروژه را به سرور منتقل کرده و وارد پوشه پروژه شوید:
+### مرحله ۲: نصب Node.js و تنظیم آینه (Mirror) ایران
+به دلیل محدودیت‌های دسترسی در سرورهای ایران، پیشنهاد می‌شود از آینه **ArvanCloud** برای سرعت بیشتر استفاده کنید:
 
 ```bash
-# نصب بسته‌های مورد نیاز
+# نصب Node.js نسخه 20
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# تنظیم آینه رسمی ایران برای NPM
+npm config set registry https://npm.arvancloud.ir
+```
+
+### مرحله ۳: آماده‌سازی پروژه
+پروژه را کلون کرده و وابستگی‌ها را نصب کنید:
+
+```bash
+git clone https://github.com/mohamadkazemt/-.git /var/www/personnel-app
+cd /var/www/personnel-app
+
+# نصب پکیج‌ها (با استفاده از آینه تنظیم شده)
 npm install
 
-# ساخت نسخه نهایی (Production Build)
+# ساخت نسخه پروداکشن (فرانت‌اند)
 npm run build
 ```
 
-### ۳. اجرا با استفاده از PM2 (برای پایداری)
-برای اینکه برنامه بعد از بستن ترمینال هم فعال بماند، از PM2 استفاده می‌کنیم:
+### مرحله ۴: تنظیمات فایل .env
+فایل تنظیمات را ایجاد و مقادیر مورد نیاز (بخصوص رمز مدیریت و کلید امنیتی) را ست کنید:
+
+```bash
+nano .env
+```
+محتوای زیر را در آن قرار دهید:
+```env
+JWT_SECRET=یک_عبارت_تصادفی_و_طولانی
+ADMIN_USER=ایمیل_مدیر
+ADMIN_PASSWORD=رمز_عبور_مدیر
+NODE_ENV=production
+```
+
+### مرحله ۵: پیکربندی Nginx (Reverse Proxy)
+برای اتصال دامنه به برنامه و مدیریت ترافیک، یک فایل کانفیگ برای Nginx بسازید:
+
+```bash
+sudo nano /etc/nginx/sites-available/personnel-app
+```
+محتوای زیر را قرار دهید (بجای `example.com` دامنه یا IP خود را بگذارید):
+```nginx
+server {
+    listen 80;
+    server_name example.com; # یا آی‌پی سرور
+
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        client_max_body_size 50M; # برای آپلود راحت فایل‌های اکسل سنگین
+    }
+}
+```
+سپس فایل را فعال و Nginx را ریستارت کنید:
+```bash
+sudo ln -s /etc/nginx/sites-available/personnel-app /etc/nginx/sites-enabled/
+sudo rm /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+### مرحله ۶: دریافت گواهینامه SSL (HTTPS)
+اگر دامنه دارید، حتماً از پروتکل امن HTTPS استفاده کنید:
+
+```bash
+sudo certbot --nginx -d example.com
+```
+
+### مرحله ۷: مدیریت پردازش با PM2
+برای اینکه برنامه در پس‌زمینه اجرا شود و در صورت کراش یا ریستارت سرور خودکار بالا بیاید:
 
 ```bash
 sudo npm install -g pm2
-# اجرا روی پورت ۳۰۰۰ (یا هر پورت دلخواه در فایل .env)
 pm2 start npm --name "personnel-app" -- run start
+pm2 save
+pm2 startup
 ```
 
 ---
 
-## 🇬🇧 Deployment Guide (Ubuntu Server)
+## 📊 نگهداری و عیب‌یابی (Maintenance)
 
-### 1. Prerequisites
-You need to install Node.js and npm on your server.
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Node.js (v20+ recommended)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-### 2. Project Installation
-Transfer project files to the server and navigate to the project directory:
-
-```bash
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-```
-
-### 3. Run with PM2 (For Stability)
-To keep the application running in the background, use PM2:
-
-```bash
-sudo npm install -g pm2
-# Run the production server
-pm2 start npm --name "personnel-app" -- run start
-```
+- **مشاهده لاگ‌های زنده:** `pm2 logs personnel-app`
+- **بروزرسانی پروژه:**
+  ```bash
+  cd /var/www/personnel-app
+  git pull
+  npm install
+  npm run build
+  pm2 restart personnel-app
+  ```
+- **بررسی وضعیت Nginx:** `sudo systemctl status nginx`
 
 ---
 
-## 🚀 اسکریپت نصب خودکار / Auto-Install Script
-اگر می‌خواهید همه مراحل بالا به صورت خودکار انجام شود، از فایل `deploy.sh` استفاده کنید:
+## 🇮🇷 نکات ویژه سرورهای ایران
+- اگر در دریافت پکیج‌های سیستم (`apt update`) مشکل داشتید، از آینه‌های ایرانی اوبونتو در `/etc/apt/sources.list` استفاده کنید.
+- تنظیم `npm config set registry https://npm.arvancloud.ir` تضمین می‌کند که نصب وابستگی‌ها با سرعت بالا و بدون تحریم انجام شود.
 
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
+---
+
+## 🇬🇧 Developer Notes
+- **Frontend:** React 18, Tailwind CSS, Lucide Icons, Recharts.
+- **Backend:** Express (Node.js), SQLite (Local Storage).
+- **Features:** Excel Export/Import, Advanced Filtering, Personnel Analytics Dashboard.
