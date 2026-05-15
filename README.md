@@ -38,9 +38,14 @@ npm config set registry https://npm.arvancloud.ir
 ```
 
 ### مرحله ۳: آماده‌سازی پروژه
-پروژه را کلون کرده و وابستگی‌ها را نصب کنید:
+ابتدا پوشه مقصد را بسازید و دسترسی آن را برای کاربر خودتان آزاد کنید:
 
 ```bash
+# ایجاد پوشه و تغییر مالکیت به کاربر جاری
+sudo mkdir -p /var/www/personnel-app
+sudo chown $USER:$USER /var/www/personnel-app
+
+# حالا کلون کردن بدون خطا انجام می‌شود
 git clone https://github.com/mohamadkazemt/-.git /var/www/personnel-app
 cd /var/www/personnel-app
 
